@@ -1,3 +1,185 @@
 datasource db {
   provider = "postgresql"
 }
+
+enum UserRole {
+  ADMIN
+  CASHIER
+}
+
+enum ShiftStatus {
+  OPEN
+  CLOSED
+}
+
+enum OrderType {
+  DINE_IN
+  TAKEAWAY
+}
+
+enum OrderStatus {
+  UNPAID
+  PAID
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  BCA_EDC
+  MIDTRANS_QRIS
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  EXPIRED
+  CANCELLED
+}
+
+// All money fields store integer Indonesian rupiah.
+// Timestamps store instants; business dates must use Asia/Jakarta.
+model User {
+  id              String     @id @default(uuid()) @db.Uuid
+  name            String
+  loginIdentifier String     @unique
+  passwordHash    String
+  role            UserRole
+  active          Boolean    @default(true)
+  createdAt       DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime   @updatedAt @db.Timestamptz(3)
+  shifts          Shift[]
+  orders          Order[]
+  auditLogs       AuditLog[]
+}
+
+model Category {
+  id           String    @id @default(uuid()) @db.Uuid
+  name         String
+  displayOrder Int       @default(0)
+  active       Boolean   @default(true)
+  products     Product[]
+}
+
+model Product {
+  id         String      @id @default(uuid()) @db.Uuid
+  categoryId String      @db.Uuid
+  name       String
+  price      Int
+  available  Boolean     @default(true)
+  active     Boolean     @default(true)
+  createdAt  DateTime    @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime    @updatedAt @db.Timestamptz(3)
+  category   Category    @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  orderItems OrderItem[]
+
+  @@index([categoryId])
+}
+
+model Shift {
+  id           String      @id @default(uuid()) @db.Uuid
+  cashierId    String      @db.Uuid
+  status       ShiftStatus @default(OPEN)
+  openedAt     DateTime    @default(now()) @db.Timestamptz(3)
+  closedAt     DateTime?   @db.Timestamptz(3)
+  openingCash  Int
+  // Closing values remain unset until the shift is closed.
+  expectedCash Int?
+  countedCash  Int?
+  variance     Int?
+  closingNote  String?
+  cashier      User        @relation(fields: [cashierId], references: [id], onDelete: Restrict)
+  orders       Order[]
+
+  @@index([cashierId])
+}
+
+model Order {
+  id          String      @id @default(uuid()) @db.Uuid
+  orderNumber String      @unique
+  shiftId     String      @db.Uuid
+  cashierId   String      @db.Uuid
+  orderType   OrderType
+  status      OrderStatus @default(UNPAID)
+  total       Int
+  createdAt   DateTime    @default(now()) @db.Timestamptz(3)
+  paidAt      DateTime?   @db.Timestamptz(3)
+  cancelledAt DateTime?   @db.Timestamptz(3)
+  shift       Shift       @relation(fields: [shiftId], references: [id], onDelete: Restrict)
+  cashier     User        @relation(fields: [cashierId], references: [id], onDelete: Restrict)
+  items       OrderItem[]
+  payments    Payment[]
+
+  @@index([shiftId])
+  @@index([cashierId])
+  @@index([createdAt])
+  @@index([status, paidAt])
+}
+
+model OrderItem {
+  id                  String  @id @default(uuid()) @db.Uuid
+  orderId             String  @db.Uuid
+  productId           String  @db.Uuid
+  // Receipt snapshots must not change when the product changes.
+  productNameSnapshot String
+  unitPriceSnapshot   Int
+  quantity            Int
+  notes               String?
+  lineTotal           Int
+  order               Order   @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  product             Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+model Payment {
+  id                String                @id @default(uuid()) @db.Uuid
+  orderId           String                @db.Uuid
+  method            PaymentMethod
+  status            PaymentStatus         @default(PENDING)
+  amount            Int
+  attemptIdentifier String                @unique
+  cashReceived      Int?
+  changeAmount      Int?
+  edcReference      String?
+  midtransReference String?
+  createdAt         DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime              @updatedAt @db.Timestamptz(3)
+  succeededAt       DateTime?             @db.Timestamptz(3)
+  order             Order                 @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  notifications     PaymentNotification[]
+
+  @@index([orderId])
+  @@index([midtransReference])
+  @@index([status, createdAt])
+  @@index([status, succeededAt])
+}
+
+model PaymentNotification {
+  id                     String    @id @default(uuid()) @db.Uuid
+  paymentId              String    @db.Uuid
+  provider               String
+  // Identifies a distinct provider event, not just its payment.
+  notificationIdentifier String    @unique
+  processingResult       String?
+  receivedAt             DateTime  @default(now()) @db.Timestamptz(3)
+  processedAt            DateTime? @db.Timestamptz(3)
+  payment                Payment   @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+
+  @@index([paymentId])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  actorId    String   @db.Uuid
+  action     String
+  entityType String
+  entityId   String   @db.Uuid
+  details    Json?
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  actor      User     @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([actorId])
+  @@index([entityType, entityId, createdAt])
+}
