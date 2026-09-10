@@ -24,7 +24,8 @@ The app runs at [http://localhost:3000](http://localhost:3000).
 
 ## Authentication utilities
 
-Milestone 2D2 provides password and signed session token utilities only. Passwords
+Milestone 2D4 adds credential verification, session cookie helpers, current-user
+lookup, and login/logout Server Actions without UI, redirects, or route protection. Passwords
 must contain 12–128 Unicode code points; spaces are preserved and no composition
 rules apply. Hashing uses Argon2id with library cost defaults and automatic salts.
 Cryptographic modules require the Node.js server runtime and import `server-only`.
@@ -38,16 +39,28 @@ generic configuration error, while invalid tokens return `null`.
 
 HS256 tokens contain only `userId`, `iat`, `exp`, and fixed application issuer and
 audience claims, with a 12-hour lifetime. Verified identity does not establish
-authorization: future protected requests must load user role and active status
-from PostgreSQL. Cookie options are provided without setting or deleting cookies.
+authorization: `getCurrentUser()` loads current role and active status from
+PostgreSQL on every call and returns only id, name, loginIdentifier, and role.
+Missing/invalid sessions and inactive/deleted users return null.
+
+`loginAction(loginIdentifier, password)` validates input through
+`authenticateCredentials()` and creates the cookie on success. Credential failures
+return `{ success: false, error: "Login atau password salah." }`; success returns
+`{ success: true }`. Passwords are never transformed and inputs are bounded before
+verification. Operational database/configuration failures propagate as server errors.
+`createSession(userId)` sets the HTTP-only cookie for 12 hours without sliding renewal.
+`getSessionIdentity()` verifies it; `logoutAction()` expires it at `/` using a
+state-changing Server Action. Cookie writes require a Server Action or Route Handler.
 
 Run the isolated utility tests without a database or configured session secret:
 
 ```bash
-pnpm exec tsx --conditions=react-server --test src/lib/auth/auth.test.ts
+pnpm exec tsx --conditions=react-server --test src/lib/auth/*.test.ts
 ```
 
 The test-only `react-server` condition enables the `server-only` package in Node.
+Backend tests replace database reads and request cookie storage; no persistent
+data is changed. Cryptographic verification uses real utilities with isolated secrets.
 
 ## Development menu seed
 
