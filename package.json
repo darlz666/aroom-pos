@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "db:seed": "prisma db seed",
     "dev": "next dev",
     "build": "prisma generate && next build",
     "start": "next start",
@@ -27,6 +28,7 @@
     "eslint-config-next": "16.3.4",
     "prisma": "7.10.0",
     "tailwindcss": "^4",
+    "tsx": "^4.23.13",
     "typescript": "^5"
   },
   "packageManager": "pnpm@12.3.4"

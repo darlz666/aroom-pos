@@ -1,36 +1,37 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AROOM POS
 
-## Getting Started
+A touchscreen-first point-of-sale project for AROOM Coffee Bar, built with Next.js, TypeScript, and PostgreSQL for a single outlet and register.
 
-First, run the development server:
+## Requirements
+
+- Node.js
+- pnpm
+- PostgreSQL
+
+## Local setup
+
+Copy `.env.example` to `.env` and configure `DATABASE_URL` for your local development PostgreSQL database. With PostgreSQL running, run:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+pnpm install
+pnpm prisma generate
+pnpm prisma migrate deploy
+pnpm db:seed
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+The app runs at [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Development menu seed
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+The seed contains the confirmed AROOM menu: **4 categories and 23 products**. Categories are Signature, Americano Series, Coffee & Drinks, and Food & Snacks, in that display order. All seeded categories are active; all seeded products are active and available. Prices are integer rupiah, defined with stable IDs in `prisma/seed-menu.ts`.
 
-## Learn More
+The seed is development-only and refuses `NODE_ENV=production`. Use only a development `DATABASE_URL`. Reruns restore the seeded menu values in one transaction without duplicates, preserving unrelated rows and product creation timestamps. No users or transaction data are seeded or deleted.
 
-To learn more about Next.js, take a look at the following resources:
+Run the integration test against the migrated development database:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+pnpm exec tsx --test prisma/seed-menu.test.ts
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The test rolls back its database changes.
