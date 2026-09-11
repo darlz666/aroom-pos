@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { parseShiftMoney } from "./domain";
+
+test("strict opening cash parser accepts integer rupiah and rejects malformed form input", () => {
+  for (const value of [0, 100000, "0", "100000", "2147483647"]) assert.equal(parseShiftMoney(value), Number(value));
+  for (const value of ["", " ", " 1000 ", "-1", "1000.5", "1e3", "Rp1000", "1,000", "1000abc", "2147483648", "1\n", null, undefined, {}, true, -1, 0.5]) {
+    assert.throws(() => parseShiftMoney(value), { code: "INVALID_MONEY" });
+  }
+});
 import { assertCanCloseShift, assertCanOpenShift, assertCanOperateShift, assertCanViewShift, calculateCashVariance, calculateExpectedCash, MAX_SHIFT_MONEY, ShiftError, shiftHistoryWhere, validateShiftMoney } from "./domain";
 
 const cashier = { id: "cashier", role: "CASHIER" } as const;

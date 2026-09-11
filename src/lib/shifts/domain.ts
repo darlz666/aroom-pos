@@ -20,6 +20,13 @@ export function validateShiftMoney(value: unknown): number {
   return value;
 }
 
+/** Form text is digits only: no trimming, separators, signs or exponent syntax. */
+export function parseShiftMoney(value: unknown): number {
+  if (typeof value === "number") return validateShiftMoney(value);
+  if (typeof value !== "string" || !/^[0-9]+$/.test(value)) throw new ShiftError("INVALID_MONEY");
+  return validateShiftMoney(Number(value));
+}
+
 export function calculateExpectedCash(openingCash: unknown, successfulCashAmount: unknown): number {
   return validateShiftMoney(validateShiftMoney(openingCash) + validateShiftMoney(successfulCashAmount));
 }
