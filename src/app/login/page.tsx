@@ -1,11 +1,15 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
+import { getCurrentUser } from "@/lib/auth/current-user";
 import { LoginForm } from "./login-form";
 
 export const metadata: Metadata = {
   title: "Masuk | AROOM POS",
 };
 
-export default function LoginPage() {
+export default async function LoginPage() {
+  if (await getCurrentUser()) redirect("/");
+
   return (
     <main lang="id" className="flex flex-1 items-center justify-center bg-[#f6f4ef] px-6 py-10 text-[#292e28] sm:px-10">
       <div className="grid w-full max-w-5xl gap-12 md:grid-cols-2 md:items-center md:gap-16 lg:gap-24">

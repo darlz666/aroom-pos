@@ -12,7 +12,15 @@ test("authentication backend with isolated database and request cookies", async 
   process.env.SESSION_SECRET = randomBytes(32).toString("base64");
   process.env.DATABASE_URL ??= "postgresql://unused:unused@localhost:1/unused";
   const { prisma } = await import("../db");
-  const headers = createRequire(import.meta.url)("next/headers");
+  const require = createRequire(import.meta.url);
+  const headers = require("next/headers");
+  // Plain Node does not apply Next's server-component navigation alias.
+  // Use the real server redirect implementation without importing client hooks.
+  const navigationPath = require.resolve("next/navigation");
+  const originalNavigation = require.cache[navigationPath];
+  const serverNavigationPath = require.resolve("next/dist/client/components/navigation.react-server");
+  require(serverNavigationPath);
+  require.cache[navigationPath] = require.cache[serverNavigationPath];
   let cookie: string | undefined;
   let options: Record<string, unknown> = {};
   let writes = 0;
@@ -51,8 +59,46 @@ test("authentication backend with isolated database and request cookies", async 
   const { authenticateCredentials } = await import("./credentials");
   const { createSession, getSessionIdentity } = await import("./session");
   const { getCurrentUser } = await import("./current-user");
+  const { requireUser, requireRole } = await import("./authorization");
   const { loginAction, logoutAction } = await import("./actions");
   try {
+    await t.test("authorization guards use current database state for the same session", async () => {
+      const redirectsTo = (path: string) => (error: unknown) => {
+        assert.equal((error as { digest?: string }).digest, `NEXT_REDIRECT;replace;${path};307;`);
+        return true;
+      };
+      try {
+        cookie = undefined;
+        await assert.rejects(requireUser(), redirectsTo("/login"));
+        await assert.rejects(requireRole("ADMIN"), redirectsTo("/login"));
+        await createSession(user.id);
+        const originalCookie = cookie;
+        assert.deepEqual(await requireUser(), safeUser());
+        assert.deepEqual(await requireRole("ADMIN"), safeUser());
+        user.role = "CASHIER";
+        assert.deepEqual(await requireUser(), safeUser());
+        await assert.rejects(requireRole("ADMIN"), redirectsTo("/"));
+        assert.deepEqual(await requireRole("CASHIER"), safeUser());
+        user.role = "ADMIN";
+        assert.deepEqual(await requireRole("ADMIN"), safeUser());
+        user.active = false;
+        assert.equal(await getCurrentUser(), null);
+        await assert.rejects(requireUser(), redirectsTo("/login"));
+        await assert.rejects(requireRole("ADMIN"), redirectsTo("/login"));
+        user.active = true;
+        exists = false;
+        assert.equal(await getCurrentUser(), null);
+        await assert.rejects(requireUser(), redirectsTo("/login"));
+        await assert.rejects(requireRole("ADMIN"), redirectsTo("/login"));
+        assert.equal(cookie === originalCookie, true);
+      } finally {
+        user.active = true;
+        user.role = "ADMIN";
+        exists = true;
+        cookie = undefined;
+        writes = 0;
+      }
+    });
     await t.test("unknown users perform real Argon2id verification with a fixed valid dummy", async () => {
       const argon2 = createRequire(import.meta.url)("@node-rs/argon2");
       const verify = argon2.verify;
@@ -145,6 +191,10 @@ test("authentication backend with isolated database and request cookies", async 
       for (cookie of invalid) {
         assert.equal(await getSessionIdentity(), null);
         assert.equal(await getCurrentUser(), null);
+        await assert.rejects(requireRole("ADMIN"), (error: unknown) => {
+          assert.equal((error as { digest?: string }).digest, "NEXT_REDIRECT;replace;/login;307;");
+          return true;
+        });
       }
       assert.equal(queries, before);
     });
@@ -162,6 +212,8 @@ test("authentication backend with isolated database and request cookies", async 
     prisma.user.findUnique = originalFindUnique;
     prisma.user.findFirst = originalFindFirst;
     t.mock.restoreAll();
+    if (originalNavigation) require.cache[navigationPath] = originalNavigation;
+    else delete require.cache[navigationPath];
     if (originalSecret === undefined) delete process.env.SESSION_SECRET;
     else process.env.SESSION_SECRET = originalSecret;
     if (originalDatabase === undefined) delete process.env.DATABASE_URL;
