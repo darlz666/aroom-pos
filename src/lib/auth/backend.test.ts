@@ -83,48 +83,61 @@ test("authentication backend with isolated database and request cookies", async 
       prisma.shift.findFirst = tx.shift.findFirst as unknown as typeof prisma.shift.findFirst;
       const rejected = (error: unknown) => (error as { digest?: string }).digest === "NEXT_REDIRECT;replace;/login;307;";
       try {
-        cookie = undefined;
-        await assert.rejects(openShiftAction(0), rejected);
-        await assert.rejects(getActiveShiftAction(), rejected);
-        await createSession(user.id);
-        for (const missing of ["inactive", "deleted"]) {
-          user.active = missing !== "inactive";
-          exists = missing !== "deleted";
+        for (const role of ["CASHIER", "ADMIN"] as const) {
+          user.role = role;
+          shift = null;
+          auditCount = 0;
+          prisma.$transaction = (async (fn: (client: typeof tx) => Promise<unknown>) => fn(tx)) as unknown as typeof prisma.$transaction;
+          cookie = undefined;
           await assert.rejects(openShiftAction(0), rejected);
           await assert.rejects(getActiveShiftAction(), rejected);
+          await createSession(user.id);
+          for (const missing of ["inactive", "deleted"]) {
+            user.active = missing !== "inactive";
+            exists = missing !== "deleted";
+            await assert.rejects(openShiftAction(0), rejected);
+            await assert.rejects(getActiveShiftAction(), rejected);
+          }
+          user.active = true;
+          exists = true;
+          assert.equal(auditCount, 0);
+          assert.deepEqual(await openShiftAction({ openingCash: 0, cashierId: "another" }), {
+            success: false, code: "INVALID_MONEY", error: "Nominal kas awal tidak valid.",
+          });
+          const opened = await openShiftAction("0");
+          assert.ok(opened.success);
+          assert.equal(opened.state, "CREATED");
+          assert.deepEqual(Object.keys(opened.shift).sort(), ["id", "openedAt", "openingCash", "status"]);
+          assert.equal(shift!.cashierId, user.id);
+          const persisted = structuredClone(shift);
+          const active = await getActiveShiftAction();
+          assert.equal(active.success && active.state, "OWNED");
+          assert.deepEqual(await getActiveShiftAction(), active);
+          await logoutAction();
+          assert.deepEqual(shift, persisted);
+          await assert.rejects(openShiftAction(100000), rejected);
+          await loginAction("admin", password);
+          assert.deepEqual(await getActiveShiftAction(), active);
+          const resumed = await openShiftAction("100000");
+          assert.ok(resumed.success);
+          assert.equal(resumed.state, "EXISTING");
+          assert.deepEqual(resumed.shift, opened.shift);
+          assert.equal(auditCount, 1);
+          shift!.cashierId = "another";
+          assert.deepEqual(await openShiftAction(0), {
+            success: false, code: "REGISTER_OCCUPIED", error: "Register sedang digunakan oleh shift lain.",
+          });
+          prisma.$transaction = (async () => { throw new Error("private database detail"); }) as unknown as typeof prisma.$transaction;
+          const failed = await openShiftAction(0);
+          assert.equal(failed.success, false);
+          assert.equal(JSON.stringify(failed).includes("private"), false);
+          assert.equal(auditCount, 1);
         }
-        user.active = true;
-        exists = true;
-        assert.equal(auditCount, 0);
-        assert.deepEqual(await openShiftAction({ openingCash: 0, cashierId: "another" }), {
-          success: false, code: "INVALID_MONEY", error: "Nominal kas awal tidak valid.",
-        });
-        const opened = await openShiftAction("0");
-        assert.ok(opened.success);
-        assert.equal(opened.state, "CREATED");
-        assert.deepEqual(Object.keys(opened.shift).sort(), ["id", "openedAt", "openingCash", "status"]);
-        assert.equal(shift!.cashierId, user.id);
-        await logoutAction();
-        await assert.rejects(openShiftAction(100000), rejected);
-        await loginAction("admin", password);
-        const resumed = await openShiftAction("100000");
-        assert.ok(resumed.success);
-        assert.equal(resumed.state, "EXISTING");
-        assert.deepEqual(resumed.shift, opened.shift);
-        assert.equal(auditCount, 1);
-        shift!.cashierId = "another";
-        assert.deepEqual(await openShiftAction(0), {
-          success: false, code: "REGISTER_OCCUPIED", error: "Register sedang digunakan oleh shift lain.",
-        });
-        prisma.$transaction = (async () => { throw new Error("private database detail"); }) as unknown as typeof prisma.$transaction;
-        const failed = await openShiftAction(0);
-        assert.equal(failed.success, false);
-        assert.equal(JSON.stringify(failed).includes("private"), false);
-        assert.equal(auditCount, 1);
       } finally {
         prisma.$transaction = originalTransaction;
         prisma.shift.findFirst = originalShiftRead;
         user.active = true;
+        user.role = "ADMIN";
         exists = true;
         cookie = undefined;
         writes = 0;

@@ -22,7 +22,18 @@ test("close shift PostgreSQL reconciliation, atomicity and locking with restored
       await assert.rejects(db.$transaction(async (tx) => {
         await tx.$executeRaw`LOCK TABLE "Shift" IN EXCLUSIVE MODE`;
         await tx.shift.updateMany({ where: { status: "OPEN" }, data: { status: "CLOSED" } });
-        const scoped = { $transaction: (fn: (client: Prisma.TransactionClient) => unknown) => fn(tx) } as unknown as PrismaClient;
+        let cashQuery: Prisma.PaymentAggregateArgs | undefined;
+        const observed = new Proxy(tx, { get(target, key) {
+          if (key !== "payment") return Reflect.get(target, key);
+          return new Proxy(tx.payment, { get(delegate, method) {
+            if (method === "aggregate") return (args: Prisma.PaymentAggregateArgs) => {
+              cashQuery = args;
+              return delegate.aggregate(args);
+            };
+            return Reflect.get(delegate, method);
+          } });
+        } });
+        const scoped = { $transaction: (fn: (client: Prisma.TransactionClient) => unknown) => fn(observed) } as unknown as PrismaClient;
         for (const actor of [cashier, admin]) {
           const shift = await tx.shift.create({ data: { cashierId: actor.id, openingCash: 0 } });
           assert.equal((await closeShift(scoped, actor, { shiftId: shift.id, countedCash: 0 })).cashVariance, 0);
@@ -65,6 +76,14 @@ test("close shift PostgreSQL reconciliation, atomicity and locking with restored
         for (const method of ["CASH", "BCA_EDC", "MIDTRANS_QRIS"] as const) {
           const pending = await addPayment(method, "PENDING", 700);
           await rejectUnchanged("UNRESOLVED_TRANSACTIONS", () => closeShift(scoped, cashier, input));
+          // Reuse the service's actual aggregate query captured from the zero-cash
+          // closes above, scoped to this fixture. Pending cash cannot be included
+          // in a saved close because the blocker correctly stops it first.
+          assert.ok(cashQuery);
+          const cash = await tx.payment.aggregate({ ...cashQuery,
+            where: { ...cashQuery.where, order: { shiftId: shift.id } },
+          });
+          assert.equal(cash._sum?.amount, 500);
           await tx.payment.update({ where: { id: pending.id }, data: { status: "FAILED" } });
         }
         for (const reason of [undefined, "", " \n"]) {

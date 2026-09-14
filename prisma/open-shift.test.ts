@@ -45,10 +45,15 @@ test("open shift PostgreSQL integration with development users and restored fixt
         await tx.$executeRaw`LOCK TABLE "Shift" IN EXCLUSIVE MODE`;
         await tx.shift.updateMany({ where: { status: "OPEN" }, data: { status: "CLOSED" } });
         const scoped = { $transaction: (fn: (client: Prisma.TransactionClient) => unknown) => fn(tx), shift: tx.shift } as unknown as PrismaClient;
-        assert.equal((await getActiveRegisterState(tx, cashier)).state, "EMPTY");
-        for (const actor of [cashier, admin]) {
-          const opened = await openShift(scoped, actor, "0");
+        for (const actor of [cashier, admin]) assert.equal((await getActiveRegisterState(tx, actor)).state, "EMPTY");
+        for (const actor of [cashier, admin]) for (const openingCash of [0, 100000]) {
+          for (const invalid of ["", "-1", "1.5", "1e3", "1,000", "2147483648", null]) {
+            await assert.rejects(openShift(scoped, actor, invalid), { code: "INVALID_MONEY" });
+            assert.equal((await getActiveRegisterState(tx, actor)).state, "EMPTY");
+          }
+          const opened = await openShift(scoped, actor, String(openingCash));
           assert.equal(opened.state, "CREATED");
+          assert.equal(opened.shift.openingCash, openingCash);
           assert.equal(opened.shift.cashierId, actor.id);
           for (const key of ["closedAt", "expectedCash", "countedCash", "variance", "closingNote"] as const) assert.equal(opened.shift[key], null);
           const resumed = await openShift(scoped, { ...actor }, "100000");
@@ -63,6 +68,7 @@ test("open shift PostgreSQL integration with development users and restored fixt
           assert.equal(view.shift?.ownsShift, false);
           assert.equal("openingCash" in view.shift!, other.role === "ADMIN");
           const own = await getActiveRegisterState(tx, actor);
+          assert.equal(own.state, "OWNED");
           assert.equal(own.shift?.ownsShift, true);
           assert.equal(own.shift?.mayOperate, true);
           const audits = await tx.auditLog.findMany({ where: { entityId: opened.shift.id } });
@@ -70,7 +76,7 @@ test("open shift PostgreSQL integration with development users and restored fixt
           assert.equal(audits[0].actorId, actor.id);
           assert.equal(audits[0].action, "SHIFT_OPENED");
           assert.equal(audits[0].entityType, "Shift");
-          assert.deepEqual(audits[0].details, { shiftOwnerId: actor.id, openingCash: 0, openedAt: opened.shift.openedAt.toISOString() });
+          assert.deepEqual(audits[0].details, { shiftOwnerId: actor.id, openingCash, openedAt: opened.shift.openedAt.toISOString() });
           assert.equal(await tx.shift.count({ where: { status: "OPEN" } }), 1);
           await tx.auditLog.deleteMany({ where: { entityId: opened.shift.id } });
           await tx.shift.delete({ where: { id: opened.shift.id } });

@@ -1,7 +1,8 @@
-# Shift backend (through 2E5)
+# Shift management (through 2E7)
 
-The opening action/UI and internal close service are implemented. There is no
-close action or close UI yet. Server entrypoints must
+The opening and closing actions/UI and internal services are implemented.
+See [acceptance verification](ACCEPTANCE.md) for the 2E7 results and test limits.
+Server entrypoints must
 load a current active authenticated user and validate request IDs before calling
 these internal helpers. Never accept the actor or shift owner from client input.
 
@@ -39,8 +40,8 @@ Payment.amount == Order.total write invariant belongs to later milestones.
 Money must be nonnegative integer rupiah within PostgreSQL Int range; variance
 may be negative. Overflow fails explicitly rather than wrapping or rounding.
 
-`closeShift(db, actor, input)` is an internal server-only API. A future entrypoint
-must use `requireUser()` to obtain the actor, never request identity/role fields.
+`closeShift(db, actor, input)` is an internal server-only API. `closeShiftAction`
+uses `requireUser()` to obtain the actor, never request identity/role fields.
 It validates the UUID before SQL, then uses `withOperableShift` to lock Shift by ID
 under READ COMMITTED and check OPEN/ownership. It checks UNPAID orders and PENDING
 payments (regardless of method or order status), sums CASH/SUCCEEDED amounts,
@@ -55,7 +56,7 @@ the trimmed `adminCloseReason` is preserved separately in `AuditLog.details`, al
 with the discrepancy note, actor/owner IDs and reconciliation values. No schema
 change is needed. `cashierId` is never changed. CLOSED retries fail without changing
 the original reconciliation or inserting another audit. After an interrupted
-request, a future caller must read the persisted state before deciding what to show.
+request, the UI directs the user to reload persisted register state before retrying.
 
 Order/payment write services do not exist yet. All future creation, cancellation,
 payment attempt updates and finalization/reconciliation flows must acquire the

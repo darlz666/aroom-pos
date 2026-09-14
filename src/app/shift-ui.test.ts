@@ -52,10 +52,13 @@ test("root authenticates first and renders only permitted state and staff fields
   await assert.rejects(async () => page.default(), /redirect login/);
   assert.equal(reads, 0);
   authenticated = true;
-  const empty = await page.default();
-  assert.ok(elements(empty).some(e => e.type === OpenShiftForm && Object.keys(e.props).length === 0));
-  assert.ok(!elements(empty).some(e => e.type === CloseShiftForm));
-  assert.match(text(empty), /Buka shift terlebih dahulu/);
+  for (role of ["CASHIER", "ADMIN"]) {
+    const empty = await page.default();
+    assert.ok(elements(empty).some(e => e.type === OpenShiftForm && Object.keys(e.props).length === 0));
+    assert.ok(!elements(empty).some(e => e.type === CloseShiftForm));
+    assert.match(text(empty), /Buka shift terlebih dahulu/);
+    assert.doesNotMatch(JSON.stringify(empty), /private-/);
+  }
   for (const mode of ["OWNED", "OCCUPIED", "ADMIN_VIEW", "ADMIN_OWNED"]) {
     role = mode.startsWith("ADMIN") ? "ADMIN" : "CASHIER";
     const occupied = mode === "OCCUPIED";
