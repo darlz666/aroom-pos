@@ -6,7 +6,7 @@ type ShiftIdentity = Pick<Shift, "cashierId" | "status">;
 export const MAX_SHIFT_MONEY = 2_147_483_647;
 
 export class ShiftError extends Error {
-  constructor(public readonly code: "INVALID_MONEY" | "REGISTER_OCCUPIED" | "SHIFT_NOT_OPEN" | "FORBIDDEN" | "REASON_REQUIRED") {
+  constructor(public readonly code: "INVALID_MONEY" | "REGISTER_OCCUPIED" | "SHIFT_NOT_OPEN" | "FORBIDDEN" | "REASON_REQUIRED" | "INVALID_INPUT" | "UNRESOLVED_TRANSACTIONS" | "DISCREPANCY_NOTE_REQUIRED") {
     super(code);
     this.name = "ShiftError";
   }

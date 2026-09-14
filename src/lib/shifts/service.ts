@@ -1,7 +1,62 @@
 import "server-only";
 
 import { Prisma, type PrismaClient, type Shift } from "../../generated/prisma/client";
-import { assertCanOpenShift, assertCanOperateShift, parseShiftMoney, ShiftError, type ShiftActor } from "./domain";
+import { assertCanCloseShift, assertCanOpenShift, assertCanOperateShift, calculateCashVariance, calculateExpectedCash, parseShiftMoney, ShiftError, validateShiftMoney, type ShiftActor } from "./domain";
+
+export type CloseShiftInput = {
+  shiftId: string;
+  countedCash: unknown;
+  discrepancyNote?: unknown;
+  adminCloseReason?: unknown;
+};
+
+function closeNote(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") throw new ShiftError("INVALID_INPUT");
+  return value.trim() || null;
+}
+
+/** Internal server API: actor must be freshly authenticated, never supplied by a client. */
+export async function closeShift(db: PrismaClient, actor: ShiftActor, input: CloseShiftInput) {
+  if (!input || typeof input.shiftId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.shiftId)) {
+    throw new ShiftError("INVALID_INPUT");
+  }
+  return withOperableShift(db, actor, input.shiftId, async (tx, shift) => {
+    // Every future order/payment writer must take this same Shift lock first,
+    // then verify OPEN before writing. Hold it until its transaction commits.
+    const unpaid = await tx.order.findFirst({ where: { shiftId: shift.id, status: "UNPAID" }, select: { id: true } });
+    const pending = await tx.payment.findFirst({ where: { order: { shiftId: shift.id }, status: "PENDING" }, select: { id: true } });
+    if (unpaid || pending) throw new ShiftError("UNRESOLVED_TRANSACTIONS");
+
+    const cash = await tx.payment.aggregate({
+      where: { order: { shiftId: shift.id }, method: "CASH", status: "SUCCEEDED" },
+      _sum: { amount: true },
+    });
+    const expectedCash = calculateExpectedCash(shift.openingCash, cash._sum.amount ?? 0);
+    const countedCash = validateShiftMoney(input.countedCash);
+    const variance = calculateCashVariance(countedCash, expectedCash);
+    assertCanCloseShift(actor, shift, input.adminCloseReason);
+    const discrepancyNote = closeNote(input.discrepancyNote);
+    const adminCloseReason = closeNote(input.adminCloseReason);
+    if (variance !== 0 && !discrepancyNote) throw new ShiftError("DISCREPANCY_NOTE_REQUIRED");
+
+    const closed = await tx.shift.update({ where: { id: shift.id }, data: {
+      status: "CLOSED", closedAt: new Date(), expectedCash, countedCash, variance, closingNote: discrepancyNote,
+    } });
+    await tx.auditLog.create({ data: {
+      actorId: actor.id, action: "SHIFT_CLOSED", entityType: "Shift", entityId: shift.id,
+      details: {
+        shiftOwnerId: shift.cashierId, closingActorId: actor.id,
+        expectedCash, countedCash, variance, adminClosedOtherOwner: shift.cashierId !== actor.id,
+        discrepancyNote, adminCloseReason,
+      },
+    } });
+    return {
+      id: closed.id, status: closed.status, closedAt: closed.closedAt!.toISOString(),
+      expectedCash, countedCash, cashVariance: variance, discrepancyNote, adminCloseReason,
+    };
+  });
+}
 
 export type OpenShiftResult = { state: "CREATED" | "EXISTING"; shift: Shift };
 
