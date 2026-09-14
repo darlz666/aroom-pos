@@ -57,8 +57,8 @@ export async function getActiveRegisterState(db: Pick<Prisma.TransactionClient, 
     id: shift.id, ownerName: shift.cashier.name, openedAt: shift.openedAt.toISOString(),
     status: shift.status, ownsShift, mayOperate,
   };
-  if (actor.role === "ADMIN") return { state: "ADMIN_VIEW", shift: { ...summary, openingCash: shift.openingCash } } as const;
   if (ownsShift) return { state: "OWNED", shift: { ...summary, openingCash: shift.openingCash } } as const;
+  if (actor.role === "ADMIN") return { state: "ADMIN_VIEW", shift: { ...summary, openingCash: shift.openingCash } } as const;
   return { state: "OCCUPIED", shift: summary } as const;
 }
 

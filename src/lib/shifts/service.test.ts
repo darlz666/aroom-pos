@@ -1,7 +1,35 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { PrismaClient, Shift } from "../../generated/prisma/client";
-import { openShift, withOperableShift } from "./service";
+import { getActiveRegisterState, openShift, withOperableShift } from "./service";
+
+test("register state prioritizes ownership and exposes cash only to owners and admins", async () => {
+  const shift = {
+    id: "shift", cashierId: "owner", status: "OPEN", openingCash: 100000,
+    openedAt: new Date("2026-09-10T18:30:00.000Z"), cashier: { name: "Owner" },
+  };
+  for (const role of ["CASHIER", "ADMIN"] as const) {
+    for (const active of [null, shift]) {
+      const db = { shift: { findFirst: async () => active } } as unknown as PrismaClient;
+      for (const id of ["owner", "another"]) {
+        const result = await getActiveRegisterState(db, { id, role });
+        if (!active) {
+          assert.deepEqual(result, { state: "EMPTY", shift: null });
+          continue;
+        }
+        const expected = id === "owner" ? "OWNED" : role === "ADMIN" ? "ADMIN_VIEW" : "OCCUPIED";
+        assert.equal(result.state, expected);
+        assert.ok(result.shift);
+        assert.equal(result.shift.ownsShift, id === "owner");
+        if (result.state === "OWNED" || result.state === "ADMIN_VIEW") {
+          assert.equal(result.shift.openingCash, 100000);
+        } else {
+          assert.equal("openingCash" in result.shift, false);
+        }
+      }
+    }
+  }
+});
 
 test("an occupied register blocks another CASHIER and ADMIN without any write", async () => {
   const shift = { id: "shift", cashierId: "owner", status: "OPEN", openingCash: 100000 } as Shift;
