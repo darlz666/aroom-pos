@@ -37,6 +37,7 @@ test("root authenticates first and renders only permitted state and staff fields
   let role = "CASHIER";
   let state: Record<string, unknown> = { success: true, state: "EMPTY" };
   const OpenShiftForm = () => null;
+  const CloseShiftForm = () => null;
   const page = load("./page.tsx", {
     "next/navigation": { redirect() {} },
     "@/lib/auth/authorization": { requireUser: async () => {
@@ -46,12 +47,14 @@ test("root authenticates first and renders only permitted state and staff fields
     "@/lib/auth/actions": { logoutAction() {} },
     "@/lib/shifts/actions": { getActiveShiftAction: async () => { reads++; return state; } },
     "./open-shift-form": { OpenShiftForm },
+    "./close-shift-form": { CloseShiftForm },
   });
   await assert.rejects(async () => page.default(), /redirect login/);
   assert.equal(reads, 0);
   authenticated = true;
   const empty = await page.default();
   assert.ok(elements(empty).some(e => e.type === OpenShiftForm && Object.keys(e.props).length === 0));
+  assert.ok(!elements(empty).some(e => e.type === CloseShiftForm));
   assert.match(text(empty), /Buka shift terlebih dahulu/);
   for (const mode of ["OWNED", "OCCUPIED", "ADMIN_VIEW", "ADMIN_OWNED"]) {
     role = mode.startsWith("ADMIN") ? "ADMIN" : "CASHIER";
@@ -61,6 +64,12 @@ test("root authenticates first and renders only permitted state and staff fields
     state = { success: true, state: mode === "ADMIN_OWNED" ? "OWNED" : mode, shift: occupied ? shift : { ...shift, openingCash: 123456 } };
     const tree = await page.default();
     const rendered = text(tree);
+    const close = elements(tree).filter(e => e.type === CloseShiftForm);
+    assert.equal(close.length, occupied ? 0 : 1);
+    if (!occupied) {
+      assert.equal(close[0].props.requiresAdminReason, mode === "ADMIN_VIEW");
+      assert.deepEqual(Object.keys(close[0].props).sort(), ["requiresAdminReason", "shiftId"]);
+    }
     assert.match(rendered, /Logout/);
     assert.match(rendered, /11 September 2026/);
     assert.match(rendered, /01[.:]30/);
@@ -159,13 +168,13 @@ test("controlled occupied error is rendered and refreshes; unexpected errors rem
   assert.ok(elements(tree).some(e => e.props["aria-live"] === "polite"));
 });
 
-test("UI has no close/order/payment action or sensitive client props and retains secure logout", () => {
+test("UI has no order/payment action or sensitive client props and retains secure logout", () => {
   const page = source("./page.tsx");
   const form = source("./open-shift-form.tsx");
   assert.doesNotMatch(page, /use client/);
   assert.match(page, /await requireUser\(\);\s*const register = await getActiveShiftAction\(\)/);
   assert.match(page, /await logoutAction\(\);\s*redirect\("\/login"\)/);
-  assert.doesNotMatch(page + form, /closeShift|createOrder|paymentAction|passwordHash|sessionToken|dangerouslySetInnerHTML/);
+  assert.doesNotMatch(page + form, /createOrder|paymentAction|passwordHash|sessionToken|dangerouslySetInnerHTML/);
   assert.match(form, /import \{ openShiftAction \} from "@\/lib\/shifts\/actions"/);
   assert.match(page, /<OpenShiftForm \/>/);
 });

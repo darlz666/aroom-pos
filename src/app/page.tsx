@@ -3,6 +3,7 @@ import { logoutAction } from "@/lib/auth/actions";
 import { requireUser } from "@/lib/auth/authorization";
 import { getActiveShiftAction } from "@/lib/shifts/actions";
 import { OpenShiftForm } from "./open-shift-form";
+import { CloseShiftForm } from "./close-shift-form";
 
 export default async function Home() {
   const user = await requireUser();
@@ -53,6 +54,7 @@ export default async function Home() {
                 <div><dt className="text-sm text-[#62685c]">Waktu buka · WIB</dt><dd className="mt-1 text-xl"><time dateTime={register.shift.openedAt}>{new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", dateStyle: "long", timeStyle: "short" }).format(new Date(register.shift.openedAt))}</time></dd></div>
                 {register.state !== "OCCUPIED" && <div><dt className="text-sm text-[#62685c]">Kas awal</dt><dd className="mt-1 text-3xl font-semibold tabular-nums">Rp{new Intl.NumberFormat("id-ID").format(register.shift.openingCash)}</dd></div>}
               </dl>
+              {(register.state === "OWNED" || register.state === "ADMIN_VIEW") && <CloseShiftForm key={register.shift.id} shiftId={register.shift.id} requiresAdminReason={register.state === "ADMIN_VIEW"} />}
               {register.state !== "OCCUPIED" && <p className="mt-8 border-t border-[#dedfd5] pt-6 text-base leading-relaxed text-[#62685c]">POS akan dilanjutkan pada milestone berikutnya</p>}
             </>
           )}
