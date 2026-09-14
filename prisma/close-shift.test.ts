@@ -42,6 +42,8 @@ test("close shift PostgreSQL reconciliation, atomicity and locking with restored
         const otherShift = await tx.shift.create({ data: { cashierId: cashier.id, openingCash: 0, status: "CLOSED" } });
         const addPayment = async (method: PaymentMethod, status: PaymentStatus, amount: number, target = shift.id) => {
           const order = await tx.order.create({ data: {
+            createIdempotencyKey: randomUUID(), createRequestFingerprint: "close-shift-fixture",
+            ...(status === "SUCCEEDED" ? { paidAt: new Date() } : { cancelledAt: new Date() }),
             shiftId: target, cashierId: cashier.id, orderNumber: `close-test-${randomUUID()}`,
             orderType: "TAKEAWAY", status: status === "SUCCEEDED" ? "PAID" : "CANCELLED", total: amount + 7,
           } });
@@ -58,6 +60,7 @@ test("close shift PostgreSQL reconciliation, atomicity and locking with restored
         for (const status of ["FAILED", "EXPIRED", "CANCELLED"] as const) await addPayment("CASH", status, 600);
         await addPayment("CASH", "SUCCEEDED", 999, otherShift.id);
         const unpaid = await tx.order.create({ data: {
+          createIdempotencyKey: randomUUID(), createRequestFingerprint: "close-shift-fixture",
           shiftId: shift.id, cashierId: cashier.id, orderNumber: randomUUID(), orderType: "DINE_IN", total: 10,
         } });
         const input = { shiftId: shift.id, countedCash: 600 };
@@ -72,7 +75,7 @@ test("close shift PostgreSQL reconciliation, atomicity and locking with restored
         };
         await rejectUnchanged("FORBIDDEN", () => closeShift(scoped, { ...cashier, id: admin.id }, input));
         await rejectUnchanged("UNRESOLVED_TRANSACTIONS", () => closeShift(scoped, cashier, input));
-        await tx.order.update({ where: { id: unpaid.id }, data: { status: "CANCELLED" } });
+        await tx.order.update({ where: { id: unpaid.id }, data: { status: "CANCELLED", cancelledAt: new Date() } });
         for (const method of ["CASH", "BCA_EDC", "MIDTRANS_QRIS"] as const) {
           const pending = await addPayment(method, "PENDING", 700);
           await rejectUnchanged("UNRESOLVED_TRANSACTIONS", () => closeShift(scoped, cashier, input));
@@ -209,7 +212,7 @@ test("close shift PostgreSQL reconciliation, atomicity and locking with restored
         const writing = withOperableShift(db, cashier, third.id, async (tx) => {
           writerLocked();
           await writerGate;
-          await tx.order.create({ data: { shiftId: third.id, cashierId: cashier.id, orderNumber: randomUUID(), orderType: "TAKEAWAY", total: 10 } });
+          await tx.order.create({ data: { createIdempotencyKey: randomUUID(), createRequestFingerprint: "close-shift-fixture", shiftId: third.id, cashierId: cashier.id, orderNumber: randomUUID(), orderType: "TAKEAWAY", total: 10 } });
         });
         const writeOutcome = writing.then(() => null, (error: unknown) => error);
         await Promise.race([locked, writing]);

@@ -100,20 +100,25 @@ model Shift {
 }
 
 model Order {
-  id          String      @id @default(uuid()) @db.Uuid
-  orderNumber String      @unique
-  shiftId     String      @db.Uuid
-  cashierId   String      @db.Uuid
-  orderType   OrderType
-  status      OrderStatus @default(UNPAID)
-  total       Int
-  createdAt   DateTime    @default(now()) @db.Timestamptz(3)
-  paidAt      DateTime?   @db.Timestamptz(3)
-  cancelledAt DateTime?   @db.Timestamptz(3)
-  shift       Shift       @relation(fields: [shiftId], references: [id], onDelete: Restrict)
-  cashier     User        @relation(fields: [cashierId], references: [id], onDelete: Restrict)
-  items       OrderItem[]
-  payments    Payment[]
+  id                       String      @id @default(uuid()) @db.Uuid
+  orderNumber              String      @unique
+  // SQL migration enforces revision >= 1; services increment once per mutation.
+  revision                 Int         @default(1)
+  // Original create request only; immutable via SQL trigger, never UI data.
+  createIdempotencyKey     String      @unique @db.Uuid
+  createRequestFingerprint String
+  shiftId                  String      @db.Uuid
+  cashierId                String      @db.Uuid
+  orderType                OrderType
+  status                   OrderStatus @default(UNPAID)
+  total                    Int
+  createdAt                DateTime    @default(now()) @db.Timestamptz(3)
+  paidAt                   DateTime?   @db.Timestamptz(3)
+  cancelledAt              DateTime?   @db.Timestamptz(3)
+  shift                    Shift       @relation(fields: [shiftId], references: [id], onDelete: Restrict)
+  cashier                  User        @relation(fields: [cashierId], references: [id], onDelete: Restrict)
+  items                    OrderItem[]
+  payments                 Payment[]
 
   @@index([shiftId])
   @@index([cashierId])
