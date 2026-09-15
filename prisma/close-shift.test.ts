@@ -50,6 +50,7 @@ test("close shift PostgreSQL reconciliation, atomicity and locking with restored
           // Deliberately different total/tender values prove reconciliation uses Payment.amount.
           return tx.payment.create({ data: {
             orderId: order.id, method, status, amount, attemptIdentifier: randomUUID(),
+            succeededAt: status === "SUCCEEDED" ? new Date() : null,
             ...(method === "CASH" ? { cashReceived: amount + 1000, changeAmount: 1000 } : {}),
           } });
         };

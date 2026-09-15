@@ -150,6 +150,9 @@ model Payment {
   status            PaymentStatus         @default(PENDING)
   amount            Int
   attemptIdentifier String                @unique
+  // Server-computed original intent, including authenticated actor; null for legacy attempts.
+  requestFingerprint String?
+  // SQL migration enforces one PENDING/SUCCEEDED attempt per order and payment integrity.
   cashReceived      Int?
   changeAmount      Int?
   edcReference      String?

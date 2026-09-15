@@ -171,6 +171,7 @@ test("edit/cancel PostgreSQL transactions, interlocks and concurrency", async (t
         for (const status of ["PENDING", "SUCCEEDED", "FAILED", "EXPIRED", "CANCELLED"] as const) {
           const order = await create();
           await db.payment.create({ data: { orderId: order.id, method, status, amount: order.total, attemptIdentifier: randomUUID(),
+            ...(method === "CASH" && status === "SUCCEEDED" ? { cashReceived: order.total, changeAmount: 0 } : {}),
             succeededAt: status === "SUCCEEDED" ? new Date() : null } });
           if (status === "PENDING" || status === "SUCCEEDED") {
             await rejectsUnchanged(order.id, () => editOrder(db, cashier, quantity(order, 3)), "PAYMENT_BLOCKED");
