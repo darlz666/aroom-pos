@@ -87,7 +87,8 @@ test("local cart supports filtering, repeated taps, quantity bounds, removal and
   const slots: unknown[] = [];
   let cursor = 0;
   const component = load("./pos-menu.tsx", {
-    react: { useState: (initial: unknown) => {
+    "@/lib/orders/actions": { createOrderAction: async () => { throw new Error("unused"); } },
+    react: { useRef: (initial: unknown) => { const i = cursor++; if (!(i in slots)) slots[i] = { current: initial }; return slots[i]; }, useState: (initial: unknown) => {
       const i = cursor++;
       if (!(i in slots)) slots[i] = initial;
       return [slots[i], (next: unknown) => { slots[i] = typeof next === "function" ? next(slots[i]) : next; }];
@@ -104,7 +105,7 @@ test("local cart supports filtering, repeated taps, quantity bounds, removal and
   assert.match(text(render()), /Keranjang masih kosong/);
   assert.equal(button("Buat Pesanan").props.disabled, true);
   assert.equal(button("Buat Pesanan").props.type, "button");
-  assert.equal(button("Buat Pesanan").props.onClick, undefined);
+  assert.equal(typeof button("Buat Pesanan").props.onClick, "function");
   assert.equal(button("Tambah Sold out").props.disabled, true);
   click("Tambah Sold out");
   assert.match(text(render()), /Keranjang masih kosong/);
@@ -116,7 +117,7 @@ test("local cart supports filtering, repeated taps, quantity bounds, removal and
   assert.match(text(render()), /Rp66.000/);
   click("Tambah Fries");
   assert.match(text(render()), /Rp82.000/);
-  assert.equal(button("Buat Pesanan").props.disabled, true);
+  assert.equal(button("Buat Pesanan").props.disabled, false);
   click("TAKEAWAY");
   assert.equal(button("TAKEAWAY").props["aria-pressed"], true);
   assert.equal(button("DINE IN").props["aria-pressed"], false);
@@ -137,11 +138,136 @@ test("local cart supports filtering, repeated taps, quantity bounds, removal and
   assert.match(text(render()), /Keranjang masih kosong/);
 });
 
-test("POS foundation has no order actions or browser persistence", () => {
+test("POS uses only create action and has no browser persistence", () => {
   const client = source("./pos-menu.tsx");
-  assert.doesNotMatch(client + source("./page.tsx"), /createOrderAction|editOrderAction|cancelOrderAction|localStorage|sessionStorage|indexedDB|fetch\(/);
+  assert.doesNotMatch(client + source("./page.tsx"), /editOrderAction|cancelOrderAction|localStorage|sessionStorage|indexedDB|fetch\(|createOrder\(/);
   assert.match(client, /lg:grid-cols-/);
   assert.match(client, /min-h-12/);
 });
 
 
+
+function creationHarness() {
+  const slots: unknown[] = [];
+  let cursor = 0;
+  let uuids = 0;
+  const requests: unknown[] = [];
+  let resolve!: (result: unknown) => void;
+  let reject!: (error: unknown) => void;
+  const component = load("./pos-menu.tsx", {
+    react: {
+      useState: (initial: unknown) => {
+        const i = cursor++;
+        if (!(i in slots)) slots[i] = initial;
+        return [slots[i], (next: unknown) => { slots[i] = typeof next === "function" ? next(slots[i]) : next; }];
+      },
+      useRef: (initial: unknown) => {
+        const i = cursor++;
+        if (!(i in slots)) slots[i] = { current: initial };
+        return slots[i];
+      },
+    },
+    "@/lib/orders/actions": { createOrderAction: (input: unknown) => {
+      requests.push(JSON.parse(JSON.stringify(input)));
+      return new Promise((yes, no) => { resolve = yes; reject = no; });
+    } },
+  }, { crypto: { randomUUID: () => `00000000-0000-4000-8000-${String(++uuids).padStart(12, "0")}` } });
+  const props = { categories: [{ id: "c", name: "Coffee", products: [
+    { id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", name: "Latte", price: 22000, available: true },
+  ] }] };
+  const render = () => { cursor = 0; return component.PosMenu(props as never); };
+  const button = (label: string) => elements(render()).find(e => e.type === "button" && (e.props["aria-label"] === label || text(e.props.children) === label))!;
+  const click = (label: string) => (button(label).props.onClick as () => Promise<void>)();
+  return { render, button, click, requests, uuids: () => uuids,
+    resolve: (value: unknown) => resolve(value), reject: () => reject(new Error("private transport details")) };
+}
+const saved = (replayed = false) => ({ success: true, order: { orderNumber: "AR-123456", total: 31000, status: "UNPAID", replayed } });
+
+test("create sends only allowed fields, guards double clicks, freezes controls and acknowledges authoritative success", async () => {
+  const h = creationHarness();
+  assert.equal(h.button("Buat Pesanan").props.disabled, true);
+  await h.click("Buat Pesanan");
+  assert.equal(h.requests.length, 0);
+  h.click("Tambah Latte");
+  assert.equal(h.button("Buat Pesanan").props.disabled, false);
+  const submit = h.button("Buat Pesanan").props.onClick as () => Promise<void>;
+  const pending = submit();
+  await submit();
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.uuids(), 1);
+  assert.deepEqual(h.requests[0], { createIdempotencyKey: "00000000-0000-4000-8000-000000000001", orderType: "DINE_IN", items: [{ productId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", quantity: 1 }] });
+  assert.doesNotMatch(JSON.stringify(h.requests), /price|productName|total|shiftId|cashierId|role|actorId|status|revision|fingerprint|Latte/);
+  for (const label of ["Tambah Latte", "TAKEAWAY", "DINE IN", "Hapus Latte", "Tambah jumlah Latte", "Kurangi Latte", "Menyimpan..."]) assert.equal(h.button(label).props.disabled, true);
+  h.click("Tambah Latte"); h.click("Hapus Latte"); h.click("TAKEAWAY");
+  h.resolve(saved()); await pending;
+  assert.match(text(h.render()), /Pesanan berhasil dibuat.*AR-123456.*Rp31.000.*UNPAID/);
+  assert.match(text(h.render()), /Keranjang masih kosong/);
+  assert.equal(h.button("DINE IN").props["aria-pressed"], true);
+  assert.equal(h.requests.length, 1);
+  h.click("Pesanan Baru"); h.click("Tambah Latte"); h.click("TAKEAWAY");
+  const next = h.click("Buat Pesanan");
+  assert.equal(h.uuids(), 2);
+  assert.equal((h.requests[1] as { orderType: string }).orderType, "TAKEAWAY");
+  h.resolve(saved(true)); await next;
+  assert.match(text(h.render()), /ditemukan kembali dari permintaan sebelumnya/);
+  assert.equal(h.button("DINE IN").props["aria-pressed"], true);
+  assert.equal(h.requests.length, 2);
+});
+
+test("CREATE_FAILED and transport loss retain exact snapshot until recovered, even after retry permission failure", async () => {
+  for (const transport of [false, true]) {
+    const h = creationHarness();
+    h.click("Tambah Latte"); h.click("Tambah jumlah Latte"); h.click("TAKEAWAY");
+    let pending = h.click("Buat Pesanan");
+    if (transport) h.reject(); else h.resolve({ success: false, code: "CREATE_FAILED", error: "safe" });
+    await pending;
+    assert.match(text(h.render()), /belum dapat dipastikan.*Jangan meninggalkan/);
+    assert.doesNotMatch(text(h.render()), /private transport/);
+    for (const label of ["Tambah Latte", "Hapus Latte", "Tambah jumlah Latte", "Kurangi Latte", "DINE IN", "TAKEAWAY"]) {
+      assert.equal(h.button(label).props.disabled, true);
+      h.click(label);
+    }
+    pending = h.click("Coba Lagi");
+    h.resolve({ success: false, code: "FORBIDDEN", error: "Izin ditolak." }); await pending;
+    assert.match(text(h.render()), /Izin ditolak/);
+    assert.equal(h.button("Hapus Latte").props.disabled, true);
+    pending = h.click("Coba Lagi");
+    assert.deepEqual(h.requests[1], h.requests[0]);
+    assert.deepEqual(h.requests[2], h.requests[0]);
+    assert.equal(h.uuids(), 1);
+    h.resolve(saved(true)); await pending;
+    assert.match(text(h.render()), /ditemukan kembali/);
+    assert.equal(h.requests.length, 3);
+  }
+});
+
+test("definite validation errors allow review and rotate the key only after draft edits", async () => {
+  for (const code of ["PRODUCT_UNAVAILABLE", "PRODUCT_NOT_FOUND", "INVALID_QUANTITY", "TOO_MANY_ITEMS", "MONEY_OVERFLOW", "NO_ACTIVE_SHIFT", "FORBIDDEN", "INVALID_INPUT", "INVALID_IDEMPOTENCY_KEY"]) {
+    const h = creationHarness(); h.click("Tambah Latte");
+    let pending = h.click("Buat Pesanan");
+    h.resolve({ success: false, code, error: "Pesan aman dari server." }); await pending;
+    assert.match(text(h.render()), /Pesan aman dari server/);
+    assert.equal(h.button("Hapus Latte").props.disabled, false);
+    pending = h.click("Buat Pesanan");
+    assert.deepEqual(h.requests[1], h.requests[0]);
+    h.resolve({ success: false, code, error: "Pesan aman dari server." }); await pending;
+    h.click("Tambah jumlah Latte");
+    assert.doesNotMatch(text(h.render()), /Pesan aman dari server/);
+    pending = h.click("Buat Pesanan");
+    assert.equal(h.uuids(), 2);
+    assert.equal((h.requests[2] as { items: { quantity: number }[] }).items[0].quantity, 2);
+    h.resolve(saved()); await pending;
+  }
+});
+
+test("idempotency conflict blocks mutation and further creation without a replacement key", async () => {
+  const h = creationHarness(); h.click("Tambah Latte");
+  const pending = h.click("Buat Pesanan");
+  h.resolve({ success: false, code: "IDEMPOTENCY_CONFLICT", error: "Identitas permintaan sudah digunakan." }); await pending;
+  assert.match(text(h.render()), /Identitas permintaan.*Tinjau pesanan.*Jangan membuat permintaan pengganti/);
+  assert.equal(h.button("Hapus Latte").props.disabled, true);
+  assert.equal(h.button("Buat Pesanan").props.disabled, true);
+  await h.click("Buat Pesanan");
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.uuids(), 1);
+});
