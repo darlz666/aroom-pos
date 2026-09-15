@@ -39,6 +39,7 @@ test("root authenticates first and renders only permitted state and staff fields
   const OpenShiftForm = () => null;
   const CloseShiftForm = () => null;
   const page = load("./page.tsx", {
+    "next/link": { default: "a" },
     "next/navigation": { redirect() {} },
     "@/lib/auth/authorization": { requireUser: async () => {
       if (!authenticated) throw new Error("redirect login");
@@ -84,7 +85,7 @@ test("root authenticates first and renders only permitted state and staff fields
     } else {
       assert.match(rendered, /Shift Aktif/);
       assert.match(rendered, /Rp 123.456/);
-      assert.match(rendered, /POS akan dilanjutkan pada milestone berikutnya/);
+      assert.match(rendered, /Buka POS/);
       if (mode === "ADMIN_VIEW") {
         assert.match(rendered, /Mode bantuan admin/);
         assert.doesNotMatch(rendered, /Shift Anda aktif/);

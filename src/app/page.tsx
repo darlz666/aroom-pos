@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { logoutAction } from "@/lib/auth/actions";
 import { requireUser } from "@/lib/auth/authorization";
 import { getActiveShiftAction } from "@/lib/shifts/actions";
@@ -55,7 +56,7 @@ export default async function Home() {
                 {register.state !== "OCCUPIED" && <div><dt className="text-sm text-[#62685c]">Kas awal</dt><dd className="mt-1 text-3xl font-semibold tabular-nums">Rp{new Intl.NumberFormat("id-ID").format(register.shift.openingCash)}</dd></div>}
               </dl>
               {(register.state === "OWNED" || register.state === "ADMIN_VIEW") && <CloseShiftForm key={register.shift.id} shiftId={register.shift.id} requiresAdminReason={register.state === "ADMIN_VIEW"} />}
-              {register.state !== "OCCUPIED" && <p className="mt-8 border-t border-[#dedfd5] pt-6 text-base leading-relaxed text-[#62685c]">POS akan dilanjutkan pada milestone berikutnya</p>}
+              {register.state !== "OCCUPIED" && <Link href="/pos" className="mt-8 flex min-h-14 items-center justify-center rounded-lg bg-[#344631] px-5 py-3 text-lg font-semibold text-white hover:bg-[#293926] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#3e503c]">Buka POS</Link>}
             </>
           )}
         </section>
