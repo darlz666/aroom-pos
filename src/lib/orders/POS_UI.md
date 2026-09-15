@@ -1,4 +1,4 @@
-# POS UI — Milestones 3F1 / 3F2 / 3F3
+# POS UI — Milestones 3F1 / 3F2 / 3F3 / 3F4
 
 - Route: `/pos`, reached from **Buka POS** on the shift dashboard.
 - The server page authenticates the user, gates access with the existing shift
@@ -45,7 +45,7 @@
   payment navigation, or payment processing.
 
 
-## 3F3 ? Active unpaid orders
+## 3F3 — Edit/cancel existing UNPAID orders
 
 - The active UNPAID list loads on entry, explicit list refresh, and once after a
   confirmed create, edit, or cancel success. There is no polling or WebSocket.
@@ -78,3 +78,35 @@
   exits edit mode and refreshes the active list; no optimistic removal.
 - This milestone adds no payment UI or payment operation, PAID-order editing,
   browser persistence, offline synchronization, or printer coupling.
+
+## 3F4 — Final POS polish and acceptance
+
+- 3F1 provides the local cart; 3F2 creates orders; 3F3 edits/cancels existing
+  UNPAID orders. 3F4 polishes these flows without changing business behavior.
+- Empty local carts instruct the cashier to select a menu product. Active orders
+  show loading before the first read and show **Belum ada pesanan aktif** only
+  after a successful empty read. Failed reads show an actionable error instead
+  of a misleading empty state; list refresh remains explicit.
+- Detail reads and mutations show separate progress messages. Saved-order mode
+  explains that totals come from the server and each edit saves immediately.
+  Local draft guidance and **Total sementara** remain separate.
+- Selected active orders expose their pressed state. Saved-item controls have
+  product-specific accessible labels. Cancellation names the selected order,
+  labels the optional reason, and retains readable confirmation hover contrast.
+  Existing synchronous mutation guards and 48px touch targets are retained.
+- Acceptance tests exercise create → active selection → edit → dismiss cancel
+  confirmation → cancel → create another order, plus empty/loading/error states,
+  disabled controls, exact-request retries and revision-conflict recovery.
+  Login/open-shift navigation was reviewed; existing shift/POS gate tests cover
+  authenticated access and shift entry. This is component/boundary coverage,
+  not a live browser journey.
+- The accepted responsive classes are unchanged: below 1024px the menu/cart
+  stack with a sticky summary; at 1024px and above they sit side-by-side.
+  Class regression checks pass. Visual acceptance at 1440×900, 1280×800,
+  1024×768 and 768×1024 still requires browser verification; no browser tooling
+  was available in this session.
+- Verification: 28 UI tests and 66 order checks pass; lint, typecheck, production
+  build, Prisma validation and migration status pass. The create and edit/cancel
+  PostgreSQL integration suites stop at their idle-register prerequisites because
+  the local database has an open shift. That shift was left intact. Full live
+  journey and database integration acceptance remain outstanding.

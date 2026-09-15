@@ -280,6 +280,7 @@ function persistedHarness(initialOrders = [orderState()]) {
   let list = initialOrders;
   let detail = orderState();
   let detailFailure: string | undefined;
+  let listFailure = false;
   let listReads = 0;
   const reads: unknown[] = [], requests: unknown[] = [], creates: unknown[] = [];
   let resolve!: (value: unknown) => void;
@@ -292,7 +293,7 @@ function persistedHarness(initialOrders = [orderState()]) {
         if (!old || deps.some((value, index) => value !== old[index])) { slots[i] = deps; effects.push(effect); } },
     },
     "@/lib/orders/actions": {
-      listActiveUnpaidOrdersAction: async () => { listReads++; return { success: true, orders: list }; },
+      listActiveUnpaidOrdersAction: async () => { listReads++; if (listFailure) throw new Error("private Prisma stack trace"); return { success: true, orders: list }; },
       getActiveUnpaidOrderAction: async (id: unknown) => { reads.push(id); return detailFailure ? { success: false, code: detailFailure, error: detailFailure } : { success: true, order: detail }; },
       editOrderAction: (input: unknown) => { requests.push(JSON.parse(JSON.stringify(input))); return new Promise(yes => { resolve = yes; }); },
       cancelOrderAction: (input: unknown) => { requests.push(JSON.parse(JSON.stringify(input))); return new Promise(yes => { resolve = yes; }); },
@@ -321,6 +322,7 @@ function persistedHarness(initialOrders = [orderState()]) {
     detailFailure: (code?: string) => { detailFailure = code; },
     detail: (value: ReturnType<typeof orderState>) => { detail = value; },
     list: (value: ReturnType<typeof orderState>[]) => { list = value; },
+    listFailure: (value: boolean) => { listFailure = value; },
     reason: (value: string) => { const input = elements(render()).find(e => e.type === "input")!; (input.props.onChange as (e: unknown) => void)({ target: { value } }); },
   };
 }
@@ -416,4 +418,65 @@ test("failed explicit reload retains conflict lock; terminal reload exits; uncer
     assert.equal(h.button("+"), undefined); assert.equal(h.button("Tambah Latte").props.disabled, false);
     h.detailFailure(); await h.select(); assert.equal(h.button("+").props.disabled, false);
   }
+});
+
+test("loading, empty and failed reads are distinct and errors allow explicit retry", async () => {
+  const h = persistedHarness([]);
+  assert.match(text(h.render()), /Memuat daftar pesanan aktif/);
+  assert.doesNotMatch(text(h.render()), /Belum ada pesanan aktif/);
+  assert.equal(h.button("Muat ulang daftar").props.disabled, true);
+  assert.match(text(h.render()), /Keranjang masih kosong.*Pilih produk dari menu untuk mulai/);
+  assert.equal(h.button("Buat Pesanan").props.disabled, true);
+  h.listFailure(true); await h.flush();
+  assert.match(text(h.render()), /Daftar pesanan belum dapat dimuat.*Periksa koneksi/);
+  assert.doesNotMatch(text(h.render()), /Belum ada pesanan aktif|Prisma|stack trace|Memuat daftar/);
+  assert.ok(elements(h.render()).some(e => e.props.role === "alert"));
+  assert.equal(h.button("Muat ulang daftar").props.disabled, false);
+  h.listFailure(false); h.click("Muat ulang daftar"); await h.flush();
+  assert.match(text(h.render()), /Belum ada pesanan aktif/);
+  assert.doesNotMatch(text(h.render()), /belum dapat dimuat/);
+  h.list([orderState()]); h.click("Muat ulang daftar"); await h.flush();
+  const selection = elements(h.render()).find(e => e.type === "button" && text(e).startsWith("AR-"))!;
+  (selection.props.onClick as () => void)();
+  assert.match(text(h.render()), /Memuat pesanan. Tunggu/);
+  assert.ok(elements(h.render()).some(e => e.type === "button" && text(e).startsWith("AR-") && e.props.disabled));
+  await h.flush();
+  assert.doesNotMatch(text(h.render()), /Memuat pesanan/);
+  assert.match(text(h.render()), /Pesanan tersimpan.*Setiap perubahan langsung disimpan/);
+  assert.ok(elements(h.render()).some(e => e.type === "button" && text(e).startsWith("AR-") && e.props["aria-pressed"]));
+  h.click("Tambah jumlah Saved Coffee");
+  assert.match(text(h.render()), /Menyimpan perubahan pesanan/);
+  for (const label of ["Kurangi Saved Coffee", "Tambah jumlah Saved Coffee", "Hapus Saved Coffee", "Batalkan pesanan", "Kembali ke Pesanan Baru"]) {
+    assert.equal(h.button(label).props.disabled, true);
+    assert.match(String(h.button(label).props.className), /min-h-12.*disabled:opacity-40/);
+  }
+  await h.resolve({ success: true, order: orderState(4) });
+});
+
+test("cashier can create, select, edit, dismiss cancellation, cancel and create another order", async () => {
+  const h = persistedHarness([]); await h.flush();
+  h.click("Tambah Latte"); h.list([orderState()]); await h.click("Buat Pesanan"); await h.flush();
+  assert.equal(h.creates.length, 1);
+  await h.select(); h.click("Tambah jumlah Saved Coffee");
+  await h.resolve({ success: true, order: orderState(4) });
+  h.click("Batalkan pesanan");
+  assert.match(text(h.render()), /Batalkan\s+AR-000123\s*\?/);
+  assert.match(String(h.button("Ya, batalkan").props.className), /hover:bg-\[#70271f\]/);
+  assert.ok(elements(h.render()).some(e => e.type === "label" && e.props.htmlFor === "cancel-reason"));
+  h.click("Kembali"); assert.equal(h.requests.length, 1);
+  h.click("Batalkan pesanan"); h.click("Ya, batalkan"); h.list([]);
+  await h.resolve({ success: true, order: { ...orderState(5), status: "CANCELLED" } }); await h.flush();
+  assert.match(text(h.render()), /Belum ada pesanan aktif/);
+  h.click("Pesanan Baru"); h.click("Tambah Latte"); await h.click("Buat Pesanan"); await h.flush();
+  assert.equal(h.creates.length, 2);
+  assert.match(text(h.render()), /Pesanan berhasil dibuat/);
+});
+
+test("accepted tablet responsive classes retain the 1024px menu/cart transition", () => {
+  const client = source("./pos-menu.tsx");
+  assert.match(client, /flex min-h-0 flex-1 flex-col lg:grid lg:grid-cols-\[minmax\(0,1fr\)_minmax\(20rem,0.65fr\)\]/);
+  assert.match(client, /sticky bottom-0.*lg:hidden/);
+  assert.match(client, /lg:min-h-0 lg:flex-1 lg:overflow-y-auto/);
+  assert.match(source("./page.tsx"), /lg:h-dvh/);
+  assert.doesNotMatch(client, /(?:sm|md|xl):grid-cols-\[minmax/);
 });

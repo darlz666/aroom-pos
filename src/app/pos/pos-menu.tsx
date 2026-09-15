@@ -33,6 +33,7 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
   const orderMutationPending = useRef(false);
   const conflictLock = useRef(false);
   const [persistedPending, setPersistedPending] = useState(false);
+  const [loadingOrder, setLoadingOrder] = useState(false);
   const [conflicted, setConflicted] = useState(false);
   const [persistedError, setPersistedError] = useState<string | null>(null);
   const frozen = !["idle", "validation-error"].includes(creation.state);
@@ -137,6 +138,7 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
     if (orderMutationPending.current || (conflictLock.current && !explicit)) return;
     orderMutationPending.current = true;
     setPersistedPending(true);
+    setLoadingOrder(true);
     try {
       const result = await getActiveUnpaidOrderAction(orderId);
       if (result.success) {
@@ -145,7 +147,7 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
         setConflicted(false);
         setPersistedError(null);
       } else {
-        setPersistedError(result.error);
+        setPersistedError(result.code === "UPDATE_FAILED" ? "Pesanan belum dapat dimuat. Periksa koneksi dan coba lagi." : result.error);
         if (result.code === "ORDER_NOT_FOUND" || result.code === "ORDER_NOT_EDITABLE") {
           setSelectedOrder(null);
           conflictLock.current = false;
@@ -156,7 +158,7 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
       return result;
     } catch {
       setPersistedError("Pesanan belum dapat dimuat. Periksa koneksi dan coba lagi.");
-    } finally { orderMutationPending.current = false; setPersistedPending(false); }
+    } finally { orderMutationPending.current = false; setPersistedPending(false); setLoadingOrder(false); }
   }
 
   function adjust(id: string, delta: number) {
@@ -166,7 +168,7 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.65fr)]">
-      <ActiveOrders refreshToken={orderRefresh} selectedOrder={selectedOrder} pending={persistedPending} conflicted={conflicted} mutationError={persistedError} onSelect={order => { if (!orderMutationPending.current && !conflictLock.current) setSelectedOrder(order); }} onMutate={mutatePersisted} onCancel={cancelPersisted} onReload={reloadPersisted} />
+      <ActiveOrders refreshToken={orderRefresh} selectedOrder={selectedOrder} pending={persistedPending} loadingOrder={loadingOrder} conflicted={conflicted} mutationError={persistedError} onSelect={order => { if (!orderMutationPending.current && !conflictLock.current) setSelectedOrder(order); }} onMutate={mutatePersisted} onCancel={cancelPersisted} onReload={reloadPersisted} />
       <section aria-label="Menu" className="min-h-0 min-w-0 lg:flex lg:flex-col">
         <nav aria-label="Kategori menu" className="flex shrink-0 gap-2 overflow-x-auto border-b border-[#dedfd5] p-4">
           {[{ id: null, name: "Semua" }, ...categories].map(category => (
@@ -241,9 +243,10 @@ function ActiveOrders({
   onSelect,
   onMutate,
   onCancel,
-  onReload, pending, conflicted, mutationError,
+  onReload, pending, loadingOrder, conflicted, mutationError,
 }: {
   pending: boolean;
+  loadingOrder: boolean;
   conflicted: boolean;
   mutationError: string | null;
   refreshToken: number;
@@ -255,6 +258,7 @@ function ActiveOrders({
 }) {
   const [orders, setOrders] = useState<SafeOrder[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [reason, setReason] = useState("");
@@ -262,13 +266,16 @@ function ActiveOrders({
 
   async function load() {
     const request = ++listRequest.current;
+    setLoading(true);
     try {
       const result = await listActiveUnpaidOrdersAction();
       if (request !== listRequest.current) return;
       if (result.success) { setOrders(result.orders); setError(null); }
-      else setError(result.error);
+      else setError(result.code === "UPDATE_FAILED" ? "Daftar pesanan belum dapat dimuat. Periksa koneksi dan coba lagi." : result.error);
     } catch {
       if (request === listRequest.current) setError("Daftar pesanan belum dapat dimuat. Periksa koneksi dan coba lagi.");
+    } finally {
+      if (request === listRequest.current) setLoading(false);
     }
   }
   useEffect(() => {
@@ -290,18 +297,20 @@ function ActiveOrders({
   return <section aria-labelledby="active-orders-heading" className="col-span-full border-b border-[#dedfd5] bg-[#fffefa] p-4 sm:p-6">
     <div className="flex flex-wrap items-baseline justify-between gap-2">
       <h2 id="active-orders-heading" className="text-xl font-semibold">Pesanan Aktif</h2>
-      <button type="button" className={control} onClick={() => void load()} disabled={pending}>Muat ulang daftar</button>
+      <button type="button" className={control} onClick={() => void load()} disabled={pending || loading}>Muat ulang daftar</button>
     </div>
     {(mutationError || error) && <p role="alert" className="mt-3 rounded-lg border border-[#8b3026] p-3 text-[#8b3026]">{mutationError || error}</p>}
-    {orders.length === 0 ? <p className="mt-3 text-[#62685c]">Belum ada pesanan aktif.</p> : <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-      {orders.map(order => <button key={order.id} type="button" disabled={pending || conflicted} onClick={() => { if (!pending && !conflicted) void select(order); }} className={`${control} flex h-auto min-h-20 flex-col items-start gap-1 text-left ${selectedOrder?.id === order.id ? "border-[#344631] bg-[#e9eade]" : "bg-[#fffefa]"}`}>
+    {loading && <p role="status" className="mt-3 text-[#62685c]">Memuat daftar pesanan aktif...</p>}
+    {pending && <p role="status" className="mt-3 text-[#62685c]">{loadingOrder ? "Memuat pesanan. Tunggu sebelum mengubah pesanan." : "Menyimpan perubahan pesanan. Tunggu sebentar."}</p>}
+    {orders.length === 0 ? !loading && !error && <p className="mt-3 text-[#62685c]">Belum ada pesanan aktif.</p> : <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+      {orders.map(order => <button key={order.id} type="button" aria-pressed={selectedOrder?.id === order.id} disabled={pending || conflicted} onClick={() => { if (!pending && !conflicted) void select(order); }} className={`${control} flex h-auto min-h-20 flex-col items-start gap-1 text-left ${selectedOrder?.id === order.id ? "border-[#344631] bg-[#e9eade]" : "bg-[#fffefa]"}`}>
         <strong>{order.orderNumber}</strong><span>{rupiah(order.total)} · {order.items.reduce((sum, item) => sum + item.quantity, 0)} item</span><span className="text-sm text-[#62685c]">{order.orderType === "DINE_IN" ? "DINE IN" : "TAKEAWAY"} · {new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", dateStyle: "short", timeStyle: "short" }).format(new Date(order.createdAt))}</span>
       </button>)}
     </div>}
     {selectedOrder && <div className="mt-5 rounded-xl border border-[#a8aea0] p-4" aria-label={`Detail ${selectedOrder.orderNumber}`}>
       <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="text-lg font-semibold">Edit {selectedOrder.orderNumber}</h3><p className="text-sm text-[#62685c]">{selectedOrder.status} · {selectedOrder.orderType} · Revisi {selectedOrder.revision} · Total {rupiah(selectedOrder.total)}</p></div><button type="button" className={control} disabled={pending} onClick={() => void select(selectedOrder, true)}>Muat Ulang Pesanan</button></div>
-      <ul className="mt-3 divide-y divide-[#dedfd5]">{selectedOrder.items.map(item => <li key={item.id} className="flex flex-wrap items-center justify-between gap-2 py-3"><span className="min-w-0"><strong>{item.productName}</strong><span className="ml-2 text-sm text-[#62685c]">{rupiah(item.unitPrice)} / item</span></span><span className="flex items-center gap-2"><button type="button" className={control} disabled={pending || conflicted || item.quantity <= 1} onClick={() => void onMutate({ type: "SET_QUANTITY", orderItemId: item.id, quantity: item.quantity - 1 })}>−</button><span className="min-w-6 text-center">{item.quantity}</span><button type="button" className={control} disabled={pending || conflicted || item.quantity >= 99} onClick={() => void onMutate({ type: "SET_QUANTITY", orderItemId: item.id, quantity: item.quantity + 1 })}>+</button><button type="button" className={`${control} text-[#8b3026]`} disabled={pending || conflicted} onClick={() => void onMutate({ type: "REMOVE_ITEM", orderItemId: item.id })}>Hapus</button></span></li>)}</ul>
-      {confirmCancel ? <div className="mt-3 rounded-lg border border-[#8b3026] p-3"><p className="font-semibold">Batalkan pesanan ini?</p><input disabled={pending || conflicted} value={reason} onChange={event => setReason(event.target.value)} maxLength={500} placeholder="Alasan (opsional)" className="mt-2 min-h-12 w-full rounded-lg border border-[#a8aea0] px-3" /><div className="mt-2 flex flex-wrap gap-2"><button type="button" className={`${control} bg-[#8b3026] text-white`} disabled={pending || conflicted || reason.length > 500} onClick={() => void cancel()}>Ya, batalkan</button><button type="button" className={control} disabled={pending} onClick={() => setConfirmCancel(false)}>Kembali</button></div></div> : <button type="button" className={`${control} mt-3 text-[#8b3026]`} disabled={pending || conflicted} onClick={() => setConfirmCancel(true)}>Batalkan pesanan</button>}
+      <p className="mt-2 text-sm text-[#62685c]">Pesanan tersimpan. Total dari server. Setiap perubahan langsung disimpan. Pilih produk dari menu untuk menambah item ke pesanan ini.</p><ul className="mt-3 divide-y divide-[#dedfd5]">{selectedOrder.items.map(item => <li key={item.id} className="flex flex-wrap items-center justify-between gap-2 py-3"><span className="min-w-0 break-words"><strong>{item.productName}</strong><span className="ml-2 text-sm text-[#62685c]">{rupiah(item.unitPrice)} / item</span></span><span className="flex items-center gap-2"><button type="button" className={control} aria-label={`Kurangi ${item.productName}`} disabled={pending || conflicted || item.quantity <= 1} onClick={() => void onMutate({ type: "SET_QUANTITY", orderItemId: item.id, quantity: item.quantity - 1 })}>−</button><span className="min-w-6 text-center">{item.quantity}</span><button type="button" className={control} aria-label={`Tambah jumlah ${item.productName}`} disabled={pending || conflicted || item.quantity >= 99} onClick={() => void onMutate({ type: "SET_QUANTITY", orderItemId: item.id, quantity: item.quantity + 1 })}>+</button><button type="button" className={`${control} text-[#8b3026]`} aria-label={`Hapus ${item.productName}`} disabled={pending || conflicted} onClick={() => void onMutate({ type: "REMOVE_ITEM", orderItemId: item.id })}>Hapus</button></span></li>)}</ul>
+      {confirmCancel ? <div className="mt-3 rounded-lg border border-[#8b3026] p-3"><p className="font-semibold">Batalkan {selectedOrder.orderNumber}?</p><label htmlFor="cancel-reason" className="mt-2 block text-sm">Alasan (opsional)</label><input id="cancel-reason" disabled={pending || conflicted} value={reason} onChange={event => setReason(event.target.value)} maxLength={500} placeholder="Alasan (opsional)" className="mt-2 min-h-12 w-full rounded-lg border border-[#a8aea0] px-3" /><div className="mt-2 flex flex-wrap gap-2"><button type="button" className={`${control} bg-[#8b3026] text-white hover:bg-[#70271f]`} disabled={pending || conflicted || reason.length > 500} onClick={() => void cancel()}>Ya, batalkan</button><button type="button" className={control} disabled={pending} onClick={() => setConfirmCancel(false)}>Kembali</button></div></div> : <button type="button" className={`${control} mt-3 text-[#8b3026]`} disabled={pending || conflicted} onClick={() => setConfirmCancel(true)}>Batalkan pesanan</button>}
       <button type="button" className={control + " mt-3"} disabled={pending || conflicted} onClick={() => onSelect(null)}>Kembali ke Pesanan Baru</button>
     </div>}
   </section>;
