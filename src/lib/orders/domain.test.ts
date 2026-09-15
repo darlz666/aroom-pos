@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { test } from "node:test";
+import { assertEditable, assertPaymentsAllowMutation, normalizeCancelRequest, normalizeEditRequest, snapshotLineTotal, sumOrderLines } from "./domain";
 import { fingerprintCreateRequest, formatOrderNumber, MAX_ORDER_MONEY, normalizeCreateRequest, priceOrder } from "./domain";
 
 const a = "a2000000-0000-4000-8000-000000000001";
@@ -42,6 +43,50 @@ test("100 unique lines accepted, 101 rejected; raw duplicate lines do not count 
   assert.throws(() => normalizeCreateRequest({ ...input(), items: [...items, { productId: randomUUID(), quantity: 1 }] }), { code: "TOO_MANY_ITEMS" });
 });
 const product = (price: number, id = a) => ({ id, name: "Coffee", price, active: true, available: true });
+
+test("edit requests strictly allow one operation and a positive integer revision", () => {
+  const base = { orderId: a, expectedRevision: 1 };
+  for (const quantity of [1, 99]) {
+    for (const operation of [{ type: "ADD_ITEM", productId: b, quantity }, { type: "SET_QUANTITY", orderItemId: b, quantity }]) {
+      assert.deepEqual(normalizeEditRequest({ ...base, operation }), { ...base, operation });
+      for (const invalid of [0, -1, 1.5, 100, "1", null, NaN, Infinity]) {
+        assert.throws(() => normalizeEditRequest({ ...base, operation: { ...operation, quantity: invalid } }), { code: "INVALID_QUANTITY" });
+      }
+    }
+  }
+  const operation = { type: "REMOVE_ITEM", orderItemId: b };
+  assert.deepEqual(normalizeEditRequest({ ...base, operation }), { ...base, operation });
+  for (const expectedRevision of [0, -1, 1.5, "1", null, undefined, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    for (const normalize of [normalizeEditRequest, normalizeCancelRequest]) assert.throws(() => normalize({ ...base, expectedRevision, ...(normalize === normalizeEditRequest ? { operation } : {}) }), { code: "INVALID_INPUT" });
+  }
+  for (const key of ["cashierId", "shiftId", "status", "total", "productName", "productPrice", "lineTotal", "revision", "paidAt", "cancelledAt", "role", "actorId"]) {
+    assert.throws(() => normalizeEditRequest({ ...base, operation, [key]: "untrusted" }), { code: "INVALID_INPUT" });
+    assert.throws(() => normalizeCancelRequest({ ...base, [key]: "untrusted" }), { code: "INVALID_INPUT" });
+  }
+  for (const invalid of [null, [], {}, { type: "REPLACE_ITEMS" }, { ...operation, quantity: 0 }, { ...operation, productId: a }, { ...operation, orderItemId: "bad" }]) {
+    assert.throws(() => normalizeEditRequest({ ...base, operation: invalid }), { code: "INVALID_INPUT" });
+  }
+  assert.throws(() => normalizeEditRequest({ ...base, orderId: "bad", operation }), { code: "INVALID_INPUT" });
+});
+test("cancellation reason is optional trimmed text limited by Unicode code points", () => {
+  const base = { orderId: a, expectedRevision: 1 };
+  for (const value of [undefined, "", " \n "]) assert.equal(normalizeCancelRequest({ ...base, cancellationReason: value }).cancellationReason, null);
+  assert.equal(normalizeCancelRequest({ ...base, cancellationReason: "  changed mind  " }).cancellationReason, "changed mind");
+  assert.equal(normalizeCancelRequest({ ...base, cancellationReason: "😀".repeat(500) }).cancellationReason, "😀".repeat(500));
+  for (const cancellationReason of [null, {}, [], 123, true, "😀".repeat(501)]) assert.throws(() => normalizeCancelRequest({ ...base, cancellationReason }), { code: "INVALID_INPUT" });
+});
+test("terminal status, revisions, payment protection and snapshot arithmetic", () => {
+  assertEditable({ status: "UNPAID", revision: 4 }, 4);
+  assert.throws(() => assertEditable({ status: "UNPAID", revision: 4 }, 3), { code: "REVISION_CONFLICT" });
+  for (const status of ["PAID", "CANCELLED"]) assert.throws(() => assertEditable({ status, revision: 4 }, 4), { code: "ORDER_NOT_EDITABLE" });
+  for (const status of ["PENDING", "SUCCEEDED"]) assert.throws(() => assertPaymentsAllowMutation([{ status: "FAILED" }, { status }]), { code: "PAYMENT_BLOCKED" });
+  assertPaymentsAllowMutation(["FAILED", "EXPIRED", "CANCELLED"].map((status) => ({ status })));
+  assert.equal(snapshotLineTotal(25000, 99), 2475000);
+  assert.throws(() => snapshotLineTotal(MAX_ORDER_MONEY, 2), { code: "MONEY_OVERFLOW" });
+  assert.equal(sumOrderLines([{ lineTotal: MAX_ORDER_MONEY }]), MAX_ORDER_MONEY);
+  assert.throws(() => sumOrderLines([{ lineTotal: MAX_ORDER_MONEY }, { lineTotal: 1 }]), { code: "MONEY_OVERFLOW" });
+  assert.throws(() => sumOrderLines([]), { code: "EMPTY_ORDER_NOT_ALLOWED" });
+});
 test("authoritative eligibility, names, prices and summed snapshots", () => {
   const items = [{ productId: a, quantity: 2 }, { productId: b, quantity: 3 }];
   const priced = priceOrder(items, [product(22000), product(5000, b)]);

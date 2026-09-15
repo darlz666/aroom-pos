@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import { Prisma, type PrismaClient } from "../../generated/prisma/client";
 import { fingerprintCreateRequest, normalizeCreateRequest } from "./domain";
-import { createOrder } from "./service";
+import { cancelOrder, createOrder, editOrder } from "./service";
 
 const actor = { id: randomUUID(), role: "CASHIER" as const };
 const request = { createIdempotencyKey: randomUUID(), orderType: "DINE_IN", items: [{ productId: randomUUID(), quantity: 1 }] };
@@ -48,4 +48,74 @@ test("connectivity and unexpected provider errors never expose raw details", asy
   const db = { order: { findUnique: async () => { throw new Error("secret connection details"); } } } as unknown as PrismaClient;
   await assert.rejects(createOrder(db, actor, request), { code: "CREATE_FAILED", message: "CREATE_FAILED" });
   await assert.rejects(createOrder(db, { ...actor, role: "INVALID" as "CASHIER" }, request), { code: "FORBIDDEN" });
+});
+
+function mutationFixture(options: { shiftStatus?: string; shiftOwner?: string; status?: string; revision?: number; payments?: readonly string[]; moved?: boolean; missing?: boolean; missingProduct?: boolean; eligible?: boolean } = {}) {
+  const events: string[] = [];
+  const order = structuredClone(stored);
+  order.status = options.status ?? "UNPAID";
+  order.revision = options.revision ?? 1;
+  const tx = {
+    $queryRaw: async (sql: TemplateStringsArray) => {
+      const query = sql.join("?");
+      if (query.includes('"Shift"')) { events.push("Shift"); return [{ id: stored.shiftId, cashierId: options.shiftOwner ?? actor.id, status: options.shiftStatus ?? "OPEN" }]; }
+      if (query.includes('"Order"')) { events.push("Order"); return [{ id: order.id }]; }
+      events.push("Payment"); return (options.payments ?? []).map((status) => ({ status }));
+    },
+    order: {
+      findUnique: async (args: { select: Record<string, unknown> }) => {
+        if (options.missing) return null;
+        if (Object.keys(args.select).length === 1) { events.push("discover persisted shift"); return { shiftId: stored.shiftId }; }
+        events.push("reread"); return { ...order, shiftId: options.moved ? randomUUID() : stored.shiftId };
+      },
+      update: async () => { events.push("write"); return { ...order, revision: order.revision + 1 }; },
+    },
+    product: { findUnique: async () => { events.push("product"); return options.missingProduct ? null : { active: options.eligible ?? true, available: options.eligible ?? true }; } },
+    orderItem: { update: async () => { events.push("item write"); }, findMany: async () => [{ lineTotal: 84 }] },
+    auditLog: { create: async () => { events.push("audit"); } },
+  };
+  const db = { $transaction: async (fn: (value: unknown) => unknown) => fn(tx) } as unknown as PrismaClient;
+  return { db, events };
+}
+const edit = { orderId: stored.id, expectedRevision: 1, operation: { type: "SET_QUANTITY", orderItemId: stored.items[0].id, quantity: 2 } };
+const cancel = { orderId: stored.id, expectedRevision: 1 };
+test("mutation locks persisted Shift then Order then Payment; no-op does not write or audit", async () => {
+  const { db, events } = mutationFixture();
+  const state = await editOrder(db, actor, edit);
+  assert.equal(state.revision, 2);
+  assert.deepEqual(events, ["discover persisted shift", "Shift", "Order", "reread", "Payment", "product", "item write", "write", "audit"]);
+  assert.deepEqual(Object.keys(state).sort(), ["id", "orderNumber", "status", "revision", "shiftId", "cashierId", "orderType", "total", "createdAt", "items"].sort());
+  const noop = mutationFixture();
+  assert.equal((await editOrder(noop.db, actor, { ...edit, operation: { ...edit.operation, quantity: 1 } })).revision, 1);
+  assert.deepEqual(noop.events, ["discover persisted shift", "Shift", "Order", "reread", "Payment"]);
+});
+test("both mutations reject protected states before any write or audit", async () => {
+  for (const [options, code] of [
+    [{ missing: true }, "ORDER_NOT_FOUND"], [{ moved: true }, "FORBIDDEN"],
+    [{ shiftStatus: "CLOSED" }, "NO_ACTIVE_SHIFT"], [{ shiftOwner: randomUUID() }, "FORBIDDEN"],
+    [{ status: "PAID" }, "ORDER_NOT_EDITABLE"], [{ status: "CANCELLED" }, "ORDER_NOT_EDITABLE"],
+    [{ revision: 2 }, "REVISION_CONFLICT"], [{ payments: ["PENDING"] }, "PAYMENT_BLOCKED"], [{ payments: ["SUCCEEDED"] }, "PAYMENT_BLOCKED"],
+  ] as const) {
+    for (const mutation of [editOrder, cancelOrder]) {
+      const { db, events } = mutationFixture(options);
+      await assert.rejects(mutation(db, actor, mutation === editOrder ? edit : cancel), { code });
+      assert.ok(!events.some((event) => event.includes("write") || event === "audit"));
+    }
+  }
+});
+test("missing and ineligible products block quantity increases without writes", async () => {
+  for (const [options, code] of [[{ missingProduct: true }, "PRODUCT_NOT_FOUND"], [{ eligible: false }, "PRODUCT_UNAVAILABLE"]] as const) {
+    const { db, events } = mutationFixture(options);
+    await assert.rejects(editOrder(db, actor, edit), { code });
+    assert.ok(!events.includes("item write"));
+  }
+});
+test("edit/cancel connectivity failures expose only controlled errors and never retry", async () => {
+  for (const mutation of [editOrder, cancelOrder]) {
+    let attempts = 0;
+    const db = { $transaction: async () => { attempts++; throw new Error("private database credentials"); } } as unknown as PrismaClient;
+    const code = mutation === editOrder ? "UPDATE_FAILED" : "CANCEL_FAILED";
+    await assert.rejects(mutation(db, actor, mutation === editOrder ? edit : cancel), { code, message: code });
+    assert.equal(attempts, 1);
+  }
 });

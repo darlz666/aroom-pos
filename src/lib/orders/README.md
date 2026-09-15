@@ -52,3 +52,29 @@ flags against a local, idle development database. Run database test files
 sequentially. Integration tests use generated fixture identities, remove only
 those fixtures, compare all affected development rows before/after, and report
 the final sequence value without resetting it.
+
+# Edit and Cancel Order backend (3D)
+
+`editOrder(db, actor, input)` and `cancelOrder(db, actor, input)` are internal
+server-only services. No UI or server action calls them yet. Only `UNPAID`
+orders are mutable; `PAID` and `CANCELLED` are terminal and immutable.
+
+Both requests require the current integer `expectedRevision`. A successful edit
+or cancellation increments `revision` exactly once. A stale value returns
+`REVISION_CONFLICT` without mutation or audit. Mutations lock resources in the
+order `Shift -> Order -> Payment`, and authorization uses the Order's persisted
+`shiftId`. `Order.cashierId` remains the original creator and `Shift.cashierId`
+remains the shift owner; the editing or cancelling actor is recorded in audit.
+
+`ADD_ITEM` reads the current authoritative Product and creates a new name/price
+snapshot. `SET_QUANTITY` preserves the existing snapshot; increasing quantity
+revalidates current Product eligibility, while decreasing quantity is allowed
+when the Product is unavailable or inactive. `REMOVE_ITEM` cannot remove the
+final persisted line. Totals are recalculated by the server from persisted
+items. A `PENDING` or `SUCCEEDED` Payment blocks edit and cancellation;
+`FAILED`, `EXPIRED`, and `CANCELLED` attempts alone do not.
+
+Cancellation preserves items, total, original creator, and shift. Its optional
+trimmed reason is stored only in `ORDER_CANCELLED` audit details. Audit writes
+are atomic with the mutation. This milestone does not implement payment
+processing, repricing, UI, or server actions.

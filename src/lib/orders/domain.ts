@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { OrderType, Product } from "../../generated/prisma/client";
 
 export const MAX_ORDER_MONEY = 2_147_483_647;
-export type OrderErrorCode = "INVALID_INPUT" | "INVALID_IDEMPOTENCY_KEY" | "IDEMPOTENCY_CONFLICT" | "NO_ACTIVE_SHIFT" | "FORBIDDEN" | "PRODUCT_NOT_FOUND" | "PRODUCT_UNAVAILABLE" | "INVALID_QUANTITY" | "TOO_MANY_ITEMS" | "MONEY_OVERFLOW" | "CREATE_FAILED";
+export type OrderErrorCode = "INVALID_INPUT" | "INVALID_IDEMPOTENCY_KEY" | "IDEMPOTENCY_CONFLICT" | "NO_ACTIVE_SHIFT" | "FORBIDDEN" | "PRODUCT_NOT_FOUND" | "PRODUCT_UNAVAILABLE" | "INVALID_QUANTITY" | "TOO_MANY_ITEMS" | "MONEY_OVERFLOW" | "CREATE_FAILED" | "ORDER_NOT_FOUND" | "ORDER_NOT_EDITABLE" | "REVISION_CONFLICT" | "ORDER_ITEM_NOT_FOUND" | "EMPTY_ORDER_NOT_ALLOWED" | "PAYMENT_BLOCKED" | "UPDATE_FAILED" | "CANCEL_FAILED";
 export class OrderError extends Error {
   constructor(public readonly code: OrderErrorCode) {
     super(code);
@@ -73,4 +73,75 @@ export function priceOrder(items: CreateOrderInput["items"], products: OrderProd
 export function formatOrderNumber(value: bigint): string {
   if (value < BigInt(1)) throw new OrderError("CREATE_FAILED");
   return `AR-${value.toString().padStart(6, "0")}`;
+}
+
+export type EditOperation =
+  | { type: "ADD_ITEM"; productId: string; quantity: number }
+  | { type: "SET_QUANTITY"; orderItemId: string; quantity: number }
+  | { type: "REMOVE_ITEM"; orderItemId: string };
+export type EditOrderInput = { orderId: string; expectedRevision: number; operation: EditOperation };
+export type CancelOrderInput = { orderId: string; expectedRevision: number; cancellationReason?: string };
+
+function identifier(value: unknown): string {
+  if (typeof value !== "string" || !uuid.test(value)) throw new OrderError("INVALID_INPUT");
+  return value.toLowerCase();
+}
+function quantity(value: unknown): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 99) throw new OrderError("INVALID_QUANTITY");
+  return value;
+}
+function mutationIdentity(request: Record<string, unknown>) {
+  const orderId = identifier(request.orderId);
+  const expectedRevision = request.expectedRevision;
+  if (typeof expectedRevision !== "number" || !Number.isSafeInteger(expectedRevision) || expectedRevision < 1) throw new OrderError("INVALID_INPUT");
+  return { orderId, expectedRevision };
+}
+export function normalizeEditRequest(input: unknown): EditOrderInput {
+  const request = object(input, ["orderId", "expectedRevision", "operation"]);
+  const identity = mutationIdentity(request);
+  const op = object(request.operation, ["type", "productId", "orderItemId", "quantity"]);
+  if (op.type === "ADD_ITEM") {
+    object(op, ["type", "productId", "quantity"]);
+    return { ...identity, operation: { type: op.type, productId: identifier(op.productId), quantity: quantity(op.quantity) } };
+  }
+  if (op.type === "SET_QUANTITY") {
+    object(op, ["type", "orderItemId", "quantity"]);
+    return { ...identity, operation: { type: op.type, orderItemId: identifier(op.orderItemId), quantity: quantity(op.quantity) } };
+  }
+  if (op.type === "REMOVE_ITEM") {
+    object(op, ["type", "orderItemId"]);
+    return { ...identity, operation: { type: op.type, orderItemId: identifier(op.orderItemId) } };
+  }
+  throw new OrderError("INVALID_INPUT");
+}
+export function normalizeCancelRequest(input: unknown) {
+  const request = object(input, ["orderId", "expectedRevision", "cancellationReason"]);
+  const identity = mutationIdentity(request);
+  const reason = request.cancellationReason;
+  if (reason !== undefined && typeof reason !== "string") throw new OrderError("INVALID_INPUT");
+  const cancellationReason = typeof reason === "string" ? reason.trim() || null : null;
+  if (cancellationReason && [...cancellationReason].length > 500) throw new OrderError("INVALID_INPUT");
+  return { ...identity, cancellationReason };
+}
+
+export function assertEditable(order: { status: string; revision: number }, expectedRevision: number): void {
+  if (order.status !== "UNPAID") throw new OrderError("ORDER_NOT_EDITABLE");
+  if (order.revision !== expectedRevision) throw new OrderError("REVISION_CONFLICT");
+}
+export function assertPaymentsAllowMutation(payments: { status: string }[]): void {
+  if (payments.some(({ status }) => status === "PENDING" || status === "SUCCEEDED")) throw new OrderError("PAYMENT_BLOCKED");
+}
+export function snapshotLineTotal(unitPrice: number, newQuantity: number): number {
+  quantity(newQuantity);
+  if (!Number.isInteger(unitPrice) || unitPrice < 0 || unitPrice > Math.floor(MAX_ORDER_MONEY / newQuantity)) throw new OrderError("MONEY_OVERFLOW");
+  return unitPrice * newQuantity;
+}
+export function sumOrderLines(items: { lineTotal: number }[]): number {
+  if (!items.length) throw new OrderError("EMPTY_ORDER_NOT_ALLOWED");
+  let total = 0;
+  for (const { lineTotal } of items) {
+    if (!Number.isInteger(lineTotal) || lineTotal < 0 || lineTotal > MAX_ORDER_MONEY - total) throw new OrderError("MONEY_OVERFLOW");
+    total += lineTotal;
+  }
+  return total;
 }
