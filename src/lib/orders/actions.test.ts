@@ -36,12 +36,17 @@ test("authenticated order application boundary", async (t) => {
   let failure: unknown;
   let useRealService = false;
   let replayed = false;
-  serviceModule.exports = Object.fromEntries((["createOrder", "editOrder", "cancelOrder"] as const).map((name) => [name,
+  serviceModule.exports = Object.fromEntries((["createOrder", "editOrder", "cancelOrder", "getActiveUnpaidOrder", "listActiveUnpaidOrders"] as const).map((name) => [name,
     async (db: typeof prisma, actor: typeof user, input: unknown) => {
       assert.equal(db, prisma);
       calls.push({ name, actor, input });
-      if (useRealService) return services[name](db, actor, input);
+      if (useRealService) {
+        if (name === "listActiveUnpaidOrders") return services[name](db, actor);
+        if (name === "getActiveUnpaidOrder") return services[name](db, actor, input as string);
+        return services[name](db, actor, input);
+      }
       if (failure) throw failure;
+      if (name === "listActiveUnpaidOrders") return [{ ...dto, payments: ["secret"] }];
       return { ...dto, status: name === "cancelOrder" ? "CANCELLED" : "UNPAID", replayed,
         createIdempotencyKey: "secret", createRequestFingerprint: "secret", payments: ["secret"],
         items: dto.items.map((item) => ({ ...item, internal: "secret" })) };
@@ -62,13 +67,40 @@ test("authenticated order application boundary", async (t) => {
   prisma.order.findUnique = (async () => { throw new Error("unexpected order lookup"); }) as unknown as typeof prisma.order.findUnique;
   prisma.$transaction = async () => { throw new Error("unexpected transaction"); };
   const { signSessionToken } = await import("../auth/session-token");
-  const { createOrderAction, editOrderAction, cancelOrderAction } = await import("./actions");
+  const { createOrderAction, editOrderAction, cancelOrderAction, getActiveUnpaidOrderAction, listActiveUnpaidOrdersAction } = await import("./actions");
   const cases = [
     { action: createOrderAction, input: createInput, fallback: "CREATE_FAILED" },
     { action: editOrderAction, input: editInput, fallback: "UPDATE_FAILED" },
     { action: cancelOrderAction, input: cancelInput, fallback: "CANCEL_FAILED" },
   ] as const;
   try {
+    await t.test("read actions authenticate fresh actors, accept only an order id, sanitize DTOs and errors", async () => {
+      for (const action of [() => listActiveUnpaidOrdersAction(), () => getActiveUnpaidOrderAction(id)]) {
+        for (const value of [undefined, "invalid"]) {
+          cookie = value;
+          await assert.rejects(action(), (error: unknown) => (error as { digest?: string }).digest === "NEXT_REDIRECT;replace;/login;307;");
+        }
+        cookie = await signSessionToken({ userId: user.id }); active = false;
+        await assert.rejects(action(), (error: unknown) => (error as { digest?: string }).digest === "NEXT_REDIRECT;replace;/login;307;");
+        active = true;
+        for (const role of ["CASHIER", "ADMIN"] as const) {
+          user.role = role;
+          const result = await action(); assert.ok(result.success);
+          assert.deepEqual(calls.at(-1)?.actor, user);
+          assert.equal(calls.at(-1)?.input, calls.at(-1)?.name === "listActiveUnpaidOrders" ? undefined : id);
+          assert.doesNotMatch(JSON.stringify(result), /secret|Fingerprint|payments/);
+        }
+        failure = new OrderError("ORDER_NOT_FOUND");
+        assert.deepEqual(await action(), { success: false, code: "ORDER_NOT_FOUND", error: "Pesanan tidak ditemukan. Muat ulang status pesanan." });
+        failure = new Error("secret database");
+        const result = await action(); assert.ok(!result.success); assert.equal(result.code, "UPDATE_FAILED");
+        assert.doesNotMatch(JSON.stringify(result), /secret/); failure = undefined;
+      }
+      const before = calls.length;
+      assert.equal((await getActiveUnpaidOrderAction({ orderId: id, shiftId: id })).success, false);
+      assert.equal(calls.length, before);
+      calls.length = 0; cookie = undefined;
+    });
     await t.test("every action redirects missing/invalid/inactive sessions before service calls", async () => {
       const token = await signSessionToken({ userId: user.id });
       for (const state of [{ cookie: undefined, active: true }, { cookie: "invalid", active: true }, { cookie: token, active: false }]) {

@@ -119,3 +119,60 @@ test("edit/cancel connectivity failures expose only controlled errors and never 
     assert.equal(attempts, 1);
   }
 });
+
+// Minimal read boundary: query contracts and DTOs, without database writes.
+test("active reads enforce operable OPEN shift and authenticated actor semantics", async () => {
+  const { listActiveUnpaidOrders, getActiveUnpaidOrder } = await import("./service");
+  for (const read of [listActiveUnpaidOrders, (db: PrismaClient, actor: { id: string; role: "CASHIER" | "ADMIN" }) => getActiveUnpaidOrder(db, actor, stored.id)]) {
+    for (const [reader, shift, code] of [
+      [{ ...actor, id: "" }, null, "FORBIDDEN"],
+      [{ ...actor, role: "INVALID" }, null, "FORBIDDEN"],
+      [actor, null, "NO_ACTIVE_SHIFT"],
+      [actor, { id: stored.shiftId, cashierId: actor.id, status: "CLOSED" }, "NO_ACTIVE_SHIFT"],
+      [actor, { id: stored.shiftId, cashierId: randomUUID(), status: "OPEN" }, "FORBIDDEN"],
+    ] as const) {
+      let orderReads = 0;
+      const db = { shift: { findFirst: async () => shift }, order: { findMany: async () => { orderReads++; }, findFirst: async () => { orderReads++; } } } as unknown as PrismaClient;
+      await assert.rejects(read(db, reader as typeof actor), { code }); assert.equal(orderReads, 0);
+    }
+  }
+});
+
+test("list filters current shift UNPAID newest first; detail filters hidden existence and returns authoritative safe DTO", async () => {
+  const { listActiveUnpaidOrders, getActiveUnpaidOrder } = await import("./service");
+  for (const role of ["CASHIER", "ADMIN"] as const) {
+    const shift = { id: stored.shiftId, cashierId: actor.id, status: "OPEN" };
+    const rows = [
+      { ...stored, createdAt: new Date("2026-09-15T02:00:00Z"), revision: 9 },
+      { ...stored, id: randomUUID(), createdAt: new Date("2026-09-15T01:00:00Z") },
+      { ...stored, id: randomUUID(), status: "PAID" },
+      { ...stored, id: randomUUID(), status: "CANCELLED" },
+      { ...stored, id: randomUUID(), shiftId: randomUUID() },
+    ];
+    const reader = { id: role === "ADMIN" ? randomUUID() : actor.id, role };
+    const db = {
+      shift: { findFirst: async (query: unknown) => { assert.deepEqual(query, { where: { status: "OPEN" } }); return shift; } },
+      order: {
+        findMany: async (query: { where: unknown; orderBy: unknown }) => {
+          assert.deepEqual(query.where, { shiftId: shift.id, status: "UNPAID" });
+          assert.deepEqual(query.orderBy, [{ createdAt: "desc" }, { id: "desc" }]);
+          return rows.filter(row => row.shiftId === shift.id && row.status === "UNPAID");
+        },
+        findFirst: async (query: { where: { id: string; shiftId: string; status: string } }) => {
+          assert.deepEqual(query.where, { id: query.where.id, shiftId: shift.id, status: "UNPAID" });
+          return rows.find(row => row.id === query.where.id && row.shiftId === query.where.shiftId && row.status === query.where.status) ?? null;
+        },
+      },
+    } as unknown as PrismaClient;
+    const list = await listActiveUnpaidOrders(db, reader);
+    assert.deepEqual(list.map(row => row.id), rows.slice(0, 2).map(row => row.id));
+    const detail = await getActiveUnpaidOrder(db, reader, stored.id.toUpperCase());
+    assert.deepEqual(detail, list[0]); assert.equal(detail.revision, 9); assert.equal(detail.items[0].unitPrice, 42);
+    assert.deepEqual(Object.keys(detail).sort(), ["id", "orderNumber", "status", "revision", "shiftId", "cashierId", "orderType", "total", "createdAt", "items"].sort());
+    assert.deepEqual(Object.keys(detail.items[0]).sort(), ["id", "productId", "productName", "unitPrice", "quantity", "lineTotal"].sort());
+    assert.doesNotMatch(JSON.stringify(list), /Fingerprint|Idempotency|payments|password|Snapshot/);
+    for (const row of rows.slice(2)) await assert.rejects(getActiveUnpaidOrder(db, reader, row.id), { code: "ORDER_NOT_FOUND" });
+    await assert.rejects(getActiveUnpaidOrder(db, reader, randomUUID()), { code: "ORDER_NOT_FOUND" });
+    for (const id of ["bad", "", "' OR 1=1", { shiftId: shift.id }]) await assert.rejects(getActiveUnpaidOrder(db, reader, id as string), { code: "INVALID_INPUT" });
+  }
+});

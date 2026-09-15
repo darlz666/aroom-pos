@@ -4,7 +4,8 @@ import { unstable_rethrow } from "next/navigation";
 import { requireUser } from "../auth/authorization";
 import { prisma } from "../db";
 import { OrderError, type OrderErrorCode } from "./domain";
-import { cancelOrder, createOrder, editOrder, type EditOrderResult } from "./service";
+import { cancelOrder, createOrder, editOrder, getActiveUnpaidOrder, listActiveUnpaidOrders, type EditOrderResult } from "./service";
+export type { SafeOrder } from "./service";
 
 const messages = {
   INVALID_INPUT: "Data pesanan tidak valid. Periksa isian pesanan.",
@@ -73,5 +74,24 @@ export async function cancelOrderAction(input: unknown) {
     return { success: true, order: orderDto(order) } as const;
   } catch (error) {
     return safeFailure(error, "CANCEL_FAILED");
+  }
+}
+
+export async function listActiveUnpaidOrdersAction() {
+  try {
+    const actor = await requireUser();
+    return { success: true, orders: (await listActiveUnpaidOrders(prisma, actor)).map(orderDto) } as const;
+  } catch (error) {
+    return safeFailure(error, "UPDATE_FAILED");
+  }
+}
+
+export async function getActiveUnpaidOrderAction(orderId: unknown) {
+  try {
+    const actor = await requireUser();
+    if (typeof orderId !== "string") throw new OrderError("INVALID_INPUT");
+    return { success: true, order: orderDto(await getActiveUnpaidOrder(prisma, actor, orderId)) } as const;
+  } catch (error) {
+    return safeFailure(error, "UPDATE_FAILED");
   }
 }

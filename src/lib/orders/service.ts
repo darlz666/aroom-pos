@@ -34,6 +34,42 @@ function mutationResult(order: StoredOrder) {
 export type EditOrderResult = ReturnType<typeof mutationResult>;
 export type CancelOrderResult = EditOrderResult;
 
+export type SafeOrder = Omit<EditOrderResult, "replayed">;
+
+function readOrderDto(order: StoredOrder): SafeOrder {
+  return mutationResult(order);
+}
+
+/** Read only the active, operable shift. The actor is always server-authenticated. */
+async function operableShift(db: PrismaClient, actor: ShiftActor) {
+  try {
+    assertCanOpenShift(actor, null);
+    const shift = await findActiveShift(db);
+    assertCanOperateShift(actor, shift);
+    return shift!;
+  } catch (error) { mutationError(error, "UPDATE_FAILED"); }
+}
+
+export async function listActiveUnpaidOrders(db: PrismaClient, actor: ShiftActor): Promise<SafeOrder[]> {
+  const shift = await operableShift(db, actor);
+  const orders = await db.order.findMany({
+    where: { shiftId: shift.id, status: "UNPAID" },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    select: orderSelect,
+  });
+  return orders.map(readOrderDto);
+}
+
+export async function getActiveUnpaidOrder(db: PrismaClient, actor: ShiftActor, orderId: string): Promise<SafeOrder> {
+  if (typeof orderId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orderId)) {
+    throw new OrderError("INVALID_INPUT");
+  }
+  const shift = await operableShift(db, actor);
+  const order = await db.order.findFirst({ where: { id: orderId.toLowerCase(), shiftId: shift.id, status: "UNPAID" }, select: orderSelect });
+  if (!order) throw new OrderError("ORDER_NOT_FOUND");
+  return readOrderDto(order);
+}
+
 /** Shift discovery is never authorization. All writers must follow this lock order. */
 async function lockMutableOrder(tx: Prisma.TransactionClient, actor: ShiftActor, request: { orderId: string; expectedRevision: number }) {
   const target = await tx.order.findUnique({ where: { id: request.orderId }, select: { shiftId: true } });

@@ -138,9 +138,9 @@ test("local cart supports filtering, repeated taps, quantity bounds, removal and
   assert.match(text(render()), /Keranjang masih kosong/);
 });
 
-test("POS uses only create action and has no browser persistence", () => {
+test("POS uses action boundaries and has no browser persistence", () => {
   const client = source("./pos-menu.tsx");
-  assert.doesNotMatch(client + source("./page.tsx"), /editOrderAction|cancelOrderAction|localStorage|sessionStorage|indexedDB|fetch\(|createOrder\(/);
+  assert.doesNotMatch(client + source("./page.tsx"), /localStorage|sessionStorage|indexedDB|fetch\(|createOrder\(/);
   assert.match(client, /lg:grid-cols-/);
   assert.match(client, /min-h-12/);
 });
@@ -270,4 +270,150 @@ test("idempotency conflict blocks mutation and further creation without a replac
   await h.click("Buat Pesanan");
   assert.equal(h.requests.length, 1);
   assert.equal(h.uuids(), 1);
+});
+
+// Render both parent and detail/list component with independent hook state.
+function persistedHarness(initialOrders = [orderState()]) {
+  const states = new Map<unknown, unknown[]>();
+  let slots: unknown[] = [], cursor = 0;
+  const effects: (() => void)[] = [];
+  let list = initialOrders;
+  let detail = orderState();
+  let detailFailure: string | undefined;
+  let listReads = 0;
+  const reads: unknown[] = [], requests: unknown[] = [], creates: unknown[] = [];
+  let resolve!: (value: unknown) => void;
+  const component = load("./pos-menu.tsx", {
+    react: {
+      useState(initial: unknown) { const own = slots, i = cursor++; if (!(i in own)) own[i] = initial;
+        return [own[i], (next: unknown) => { own[i] = typeof next === "function" ? next(own[i]) : next; }]; },
+      useRef(initial: unknown) { const i = cursor++; if (!(i in slots)) slots[i] = { current: initial }; return slots[i]; },
+      useEffect(effect: () => void, deps: unknown[]) { const i = cursor++; const old = slots[i] as unknown[] | undefined;
+        if (!old || deps.some((value, index) => value !== old[index])) { slots[i] = deps; effects.push(effect); } },
+    },
+    "@/lib/orders/actions": {
+      listActiveUnpaidOrdersAction: async () => { listReads++; return { success: true, orders: list }; },
+      getActiveUnpaidOrderAction: async (id: unknown) => { reads.push(id); return detailFailure ? { success: false, code: detailFailure, error: detailFailure } : { success: true, order: detail }; },
+      editOrderAction: (input: unknown) => { requests.push(JSON.parse(JSON.stringify(input))); return new Promise(yes => { resolve = yes; }); },
+      cancelOrderAction: (input: unknown) => { requests.push(JSON.parse(JSON.stringify(input))); return new Promise(yes => { resolve = yes; }); },
+      createOrderAction: async (input: unknown) => { creates.push(input); return saved(); },
+    },
+  }, { crypto: { randomUUID: () => "key" }, window: { setTimeout: (fn: () => void) => { fn(); return 1; }, clearTimeout() {} } });
+  const props = { categories: [{ id: "coffee", name: "Coffee", products: [{ id: "product", name: "Latte", price: 22000, available: true }] }] };
+  function renderComponent(fn: (...args: never[]) => unknown, props: unknown): unknown {
+    slots = states.get(fn) ?? []; states.set(fn, slots); cursor = 0;
+    return expand(fn(props as never));
+  }
+  function expand(node: unknown): unknown {
+    if (Array.isArray(node)) return node.map(expand);
+    if (!node || typeof node !== "object" || !("props" in node)) return node;
+    const e = node as Element;
+    if (typeof e.type === "function") return renderComponent(e.type as (...args: never[]) => unknown, e.props);
+    return { ...e, props: { ...e.props, children: expand(e.props.children) } };
+  }
+  const render = () => renderComponent(component.PosMenu, props);
+  const flush = async () => { render(); while (effects.length) effects.shift()!(); await Promise.resolve(); await Promise.resolve(); render(); };
+  const button = (label: string) => elements(render()).find(e => e.type === "button" && (e.props["aria-label"] === label || text(e.props.children).trim() === label))!;
+  const click = (label: string) => (button(label).props.onClick as () => unknown)();
+  const select = async () => { await flush(); const e = elements(render()).find(e => e.type === "button" && text(e).startsWith("AR-"))!; (e.props.onClick as () => void)(); await flush(); };
+  return { render, flush, button, click, select, reads, requests, creates, listReads: () => listReads,
+    resolve: async (value: unknown) => { resolve(value); await flush(); },
+    detailFailure: (code?: string) => { detailFailure = code; },
+    detail: (value: ReturnType<typeof orderState>) => { detail = value; },
+    list: (value: ReturnType<typeof orderState>[]) => { list = value; },
+    reason: (value: string) => { const input = elements(render()).find(e => e.type === "input")!; (input.props.onChange as (e: unknown) => void)({ target: { value } }); },
+  };
+}
+function orderState(revision = 3) {
+  return { id: "order", orderNumber: "AR-000123", status: "UNPAID", orderType: "TAKEAWAY", revision, total: 54000,
+    createdAt: "2026-09-15T00:00:00Z", items: [{ id: "line", productId: "product", productName: "Saved Coffee", unitPrice: 27000, quantity: 2, lineTotal: 54000 }] };
+}
+
+test("active empty/list, authoritative selection, and local draft separation", async () => {
+  const empty = persistedHarness([]); await empty.flush(); assert.match(text(empty.render()), /Belum ada pesanan aktif/);
+  const h = persistedHarness(); h.click("Tambah Latte"); h.click("TAKEAWAY");
+  h.detail({ ...orderState(7), total: 81000 }); await h.select();
+  assert.deepEqual(h.reads, ["order"]);
+  assert.match(text(h.render()), /Edit\s+AR-000123.*UNPAID.*TAKEAWAY.*Revisi\s+7.*Rp81.000/);
+  assert.equal(h.button("Buat Pesanan"), undefined); assert.equal(h.button("TAKEAWAY"), undefined);
+  assert.doesNotMatch(text(h.render()), /Total sementara/);
+  h.click("Kembali ke Pesanan Baru");
+  assert.match(text(h.render()), /Pesanan Baru.*Latte.*Rp22.000/);
+  assert.equal(h.button("TAKEAWAY").props["aria-pressed"], true);
+});
+
+test("persisted safe operations replace revision, refresh once and synchronously block duplicates", async () => {
+  const h = persistedHarness(); await h.select();
+  const operations = [
+    ["Tambah Latte", { type: "ADD_ITEM", productId: "product", quantity: 1 }],
+    ["+", { type: "SET_QUANTITY", orderItemId: "line", quantity: 3 }],
+    ["Hapus", { type: "REMOVE_ITEM", orderItemId: "line" }],
+  ] as const;
+  for (let i = 0; i < operations.length; i++) {
+    const [label, operation] = operations[i]; const click = h.button(label).props.onClick as () => void;
+    const before = h.listReads(); click(); click();
+    assert.equal(h.requests.length, i + 1);
+    assert.deepEqual(h.requests[i], { orderId: "order", expectedRevision: 3 + i, operation });
+    for (const label of ["Tambah Latte", "+", "Hapus", "Batalkan pesanan"]) assert.equal(h.button(label).props.disabled, true);
+    await h.resolve({ success: true, order: orderState(4 + i) }); await h.flush();
+    assert.match(text(h.render()), new RegExp(`Revisi\\s+${4 + i}`));
+    assert.equal(h.listReads(), before + 1);
+  }
+  assert.doesNotMatch(JSON.stringify(h.requests), /price|name|total|shiftId|cashierId/i);
+});
+
+test("revision conflict freezes every mutation until explicit detail reload", async () => {
+  const h = persistedHarness(); await h.select(); h.click("Batalkan pesanan"); h.click("Tambah Latte");
+  await h.resolve({ success: false, code: "REVISION_CONFLICT", error: "Konflik revisi" });
+  for (const label of ["Tambah Latte", "+", "Hapus", "Ya, batalkan", "Kembali ke Pesanan Baru"]) assert.equal(h.button(label).props.disabled, true);
+  h.click("Tambah Latte"); h.click("+"); h.click("Hapus"); h.click("Ya, batalkan");
+  await h.flush(); assert.equal(h.requests.length, 1);
+  h.click("Muat ulang daftar"); await h.flush(); assert.equal(h.button("+").props.disabled, true);
+  h.detail(orderState(10)); await h.click("Muat Ulang Pesanan"); await h.flush();
+  assert.equal(h.button("+").props.disabled, false); h.click("+");
+  assert.equal((h.requests[1] as { expectedRevision: number }).expectedRevision, 10);
+  await h.resolve({ success: true, order: orderState(11) });
+});
+
+test("blocked/undefined mutations preserve detail; stale mutations safely exit", async () => {
+  for (const code of [undefined, "PAYMENT_BLOCKED", "ORDER_NOT_EDITABLE", "ORDER_NOT_FOUND"]) {
+    const h = persistedHarness(); await h.select(); h.click("+");
+    await h.resolve(code ? { success: false, code, error: code } : undefined);
+    if (!code || code === "PAYMENT_BLOCKED") assert.match(text(h.render()), /Edit\s+AR-000123.*Revisi\s+3.*Rp54.000/);
+    else { assert.equal(h.button("+"), undefined); assert.match(text(h.render()), /Pesanan Baru/); }
+  }
+});
+
+test("cancel requires confirmation, bounds and forwards optional reason, success exits and refreshes once", async () => {
+  for (const reason of ["", "  Salah pesanan  ", "x".repeat(500)]) {
+    const h = persistedHarness(); await h.select(); h.click("Batalkan pesanan"); assert.equal(h.requests.length, 0);
+    h.reason("x".repeat(501)); assert.equal(h.button("Ya, batalkan").props.disabled, true); h.click("Ya, batalkan"); assert.equal(h.requests.length, 0);
+    h.reason(reason); const before = h.listReads(); h.click("Ya, batalkan"); h.click("Ya, batalkan");
+    assert.deepEqual(h.requests, [{ orderId: "order", expectedRevision: 3, ...(reason.trim() ? { cancellationReason: reason.trim() } : {}) }]);
+    h.list([]); await h.resolve({ success: true, order: { ...orderState(4), status: "CANCELLED" } }); await h.flush();
+    assert.equal(h.button("+"), undefined); assert.match(text(h.render()), /Belum ada pesanan aktif/); assert.equal(h.listReads(), before + 1);
+  }
+  const h = persistedHarness(); await h.select(); h.click("Batalkan pesanan"); h.click("Ya, batalkan"); await h.resolve(undefined);
+  assert.ok(h.button("Ya, batalkan")); assert.match(text(h.render()), /Edit\s+AR-000123/);
+});
+
+test("confirmed creation refreshes active orders once and preserves confirmation without resubmission", async () => {
+  const h = persistedHarness([]); await h.flush(); h.click("Tambah Latte"); const before = h.listReads();
+  h.list([orderState()]); await h.click("Buat Pesanan"); await h.flush();
+  assert.equal(h.creates.length, 1); assert.equal(h.listReads(), before + 1);
+  assert.match(text(h.render()), /AR-000123.*Pesanan berhasil dibuat.*AR-123456/);
+});
+
+test("failed explicit reload retains conflict lock; terminal reload exits; uncertain edits require reload", async () => {
+  for (const code of ["REVISION_CONFLICT", "UPDATE_FAILED", "CANCEL_FAILED"]) {
+    const h = persistedHarness(); await h.select();
+    const staleSelect = elements(h.render()).find(e => e.type === "button" && text(e).startsWith("AR-"))!.props.onClick as () => void;
+    h.click("+"); await h.resolve({ success: false, code, error: code });
+    staleSelect(); await h.flush(); assert.equal(h.reads.length, 1);
+    h.detailFailure("UPDATE_FAILED"); await h.click("Muat Ulang Pesanan"); await h.flush();
+    assert.equal(h.button("+").props.disabled, true); assert.match(text(h.render()), /Revisi\s+3/);
+    h.detailFailure("ORDER_NOT_FOUND"); await h.click("Muat Ulang Pesanan"); await h.flush();
+    assert.equal(h.button("+"), undefined); assert.equal(h.button("Tambah Latte").props.disabled, false);
+    h.detailFailure(); await h.select(); assert.equal(h.button("+").props.disabled, false);
+  }
 });
