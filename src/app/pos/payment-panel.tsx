@@ -25,8 +25,9 @@ const messages = {
   PAYMENT_FAILED: "Status pembayaran belum dapat dipastikan. Periksa koneksi lalu periksa hasil dengan permintaan yang sama. Jangan menerima pembayaran lagi atau meninggalkan halaman ini.",
 };
 
-export function PaymentPanel({ order, onClose, onPaid }: {
+export function PaymentPanel({ order, onClose, onPaid, onReceipt, receiptLoading, receiptError }: {
   order: SafeOrder; onClose: () => void; onPaid: () => void;
+  onReceipt: () => void; receiptLoading: boolean; receiptError: string | null;
 }) {
   const [method, setMethod] = useState<"CASH" | "BCA_EDC">("CASH");
   const [cash, setCash] = useState("");
@@ -93,6 +94,8 @@ export function PaymentPanel({ order, onClose, onPaid }: {
       {payment.cashReceived !== null && <p>Uang diterima: {rupiah(payment.cashReceived)} · Kembalian: {rupiah(payment.changeAmount ?? 0)}</p>}
       {payment.edcReference && <p>Referensi EDC: {payment.edcReference}</p>}
       {payment.replayed && <p>Pembayaran ditemukan kembali. Jangan menerima pembayaran lagi.</p>}
+      <button type="button" className={control} disabled={receiptLoading} onClick={onReceipt}>{receiptLoading ? "Memuat struk..." : "Lihat Struk"}</button>
+      {receiptError && <p role="alert" className="text-[#8b3026]">{receiptError}</p>}
       <button type="button" className={control} onClick={onClose}>Selesai</button>
     </div> : <>
       <p className="my-4 text-3xl font-semibold">Total {rupiah(order.total)}</p>

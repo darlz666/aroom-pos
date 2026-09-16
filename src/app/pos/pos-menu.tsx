@@ -1,6 +1,8 @@
 "use client";
 
 import { PaymentPanel } from "./payment-panel";
+import { ReceiptPanel, type Receipt } from "./receipt-panel";
+import { getReceiptAction } from "@/lib/orders/actions";
 import { useEffect, useRef, useState } from "react";
 import { cancelOrderAction, createOrderAction, editOrderAction, getActiveUnpaidOrderAction, listActiveUnpaidOrdersAction } from "@/lib/orders/actions";
 import type { CreateOrderInput } from "@/lib/orders/domain";
@@ -39,6 +41,31 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
   const [persistedError, setPersistedError] = useState<string | null>(null);
   const [paymentOrder, setPaymentOrder] = useState<SafeOrder | null>(null);
   const paymentLock = useRef(false);
+  const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const [receiptLoading, setReceiptLoading] = useState(false);
+  const [receiptError, setReceiptError] = useState<string | null>(null);
+  const receiptRequest = useRef(0);
+  const receiptBusy = useRef(false);
+  async function openReceipt() {
+    if (!paymentOrder || receiptBusy.current) return;
+    const request = ++receiptRequest.current;
+    receiptBusy.current = true;
+    setReceiptLoading(true);
+    setReceiptError(null);
+    try {
+      const result = await getReceiptAction(paymentOrder.id);
+      if (request !== receiptRequest.current) return;
+      if (result.success) setReceipt(result.receipt);
+      else setReceiptError("Struk belum dapat dimuat. Pembayaran tetap berhasil. Periksa koneksi atau status shift, lalu tekan Lihat Struk untuk mencoba lagi.");
+    } catch {
+      if (request === receiptRequest.current) setReceiptError("Struk belum dapat dimuat. Pembayaran tetap berhasil. Periksa koneksi lalu tekan Lihat Struk untuk mencoba lagi.");
+    } finally {
+      if (request === receiptRequest.current) {
+        receiptBusy.current = false;
+        setReceiptLoading(false);
+      }
+    }
+  }
   const frozen = !["idle", "validation-error"].includes(creation.state);
   function editDraft() {
     if (locked.current) return false;
@@ -169,17 +196,25 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
     setCart(current => current.map(line => line.product.id === id ? { ...line, quantity: Math.max(1, Math.min(99, line.quantity + delta)) } : line));
   }
 
-  if (paymentOrder) return <PaymentPanel key={paymentOrder.id + ":" + paymentOrder.revision} order={paymentOrder}
+  if (paymentOrder) return <>
+    {receipt && <ReceiptPanel receipt={receipt} onClose={() => setReceipt(null)} />}
+    <div hidden={receipt !== null}><PaymentPanel key={paymentOrder.id + ":" + paymentOrder.revision} order={paymentOrder}
+    onReceipt={() => void openReceipt()} receiptLoading={receiptLoading} receiptError={receiptError}
     onPaid={() => { setSelectedOrder(null); setOrderRefresh(value => value + 1); }}
     onClose={() => {
       paymentLock.current = false;
+      receiptRequest.current++;
+      receiptBusy.current = false;
+      setReceipt(null);
+      setReceiptLoading(false);
+      setReceiptError(null);
       setPaymentOrder(null);
       if (selectedOrder) {
         conflictLock.current = true;
         setConflicted(true);
         void reloadPersisted(selectedOrder.id, true);
       }
-    }} />;
+    }} /></div></>;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.65fr)]">

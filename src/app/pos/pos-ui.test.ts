@@ -25,6 +25,7 @@ function load(file: string, mocks: Record<string, unknown>, globals = {}) {
   const exports: Record<string, (...args: never[]) => unknown> = {};
   runInNewContext(code, { exports, require: (id: string) => {
     if (id === "./payment-panel") return { PaymentPanel: "PaymentPanel" };
+    if (id === "./receipt-panel") return { ReceiptPanel: "ReceiptPanel" };
     if (id in mocks) return mocks[id];
     if (id === "react/jsx-runtime") return require(id);
     throw new Error(`Unexpected component dependency: ${id}`);
@@ -286,6 +287,8 @@ function persistedHarness(initialOrders = [orderState()]) {
   let detailFailure: string | undefined;
   let listFailure = false;
   let listReads = 0;
+  const receiptReads: unknown[] = [];
+  let resolveReceipt!: (value: unknown) => void;
   const reads: unknown[] = [], requests: unknown[] = [], creates: unknown[] = [];
   let resolve!: (value: unknown) => void;
   const component = load("./pos-menu.tsx", {
@@ -297,6 +300,7 @@ function persistedHarness(initialOrders = [orderState()]) {
         if (!old || deps.some((value, index) => value !== old[index])) { slots[i] = deps; effects.push(effect); } },
     },
     "@/lib/orders/actions": {
+      getReceiptAction: (id: unknown) => { receiptReads.push(id); return new Promise(yes => { resolveReceipt = yes; }); },
       listActiveUnpaidOrdersAction: async () => { listReads++; if (listFailure) throw new Error("private Prisma stack trace"); return { success: true, orders: list }; },
       getActiveUnpaidOrderAction: async (id: unknown) => { reads.push(id); return detailFailure ? { success: false, code: detailFailure, error: detailFailure } : { success: true, order: detail }; },
       editOrderAction: (input: unknown) => { requests.push(JSON.parse(JSON.stringify(input))); return new Promise(yes => { resolve = yes; }); },
@@ -322,6 +326,7 @@ function persistedHarness(initialOrders = [orderState()]) {
   const click = (label: string) => (button(label).props.onClick as () => unknown)();
   const select = async () => { await flush(); const e = elements(render()).find(e => e.type === "button" && text(e).startsWith("AR-"))!; (e.props.onClick as () => void)(); await flush(); };
   return { render, flush, button, click, select, reads, requests, creates, listReads: () => listReads,
+    receiptReads, resolveReceipt: async (value: unknown) => { resolveReceipt(value); await flush(); },
     resolve: async (value: unknown) => { resolve(value); await flush(); },
     detailFailure: (code?: string) => { detailFailure = code; },
     detail: (value: ReturnType<typeof orderState>) => { detail = value; },
@@ -623,6 +628,28 @@ test("POS payment entry locks stale order handlers and closes through authoritat
   (panel.props.onClose as () => void)(); await h.flush();
   assert.equal(h.button("Bayar pesanan"), undefined);
   assert.match(text(h.render()), /Pesanan Baru/);
+});
+
+test("receipt loading blocks duplicate taps, supports retry and close, and ignores late responses", async () => {
+  const h = persistedHarness(); await h.select(); h.click("Bayar pesanan");
+  const panel = () => elements(h.render()).find(e => e.type === "PaymentPanel")!;
+  (panel().props.onPaid as () => void)();
+  const open = panel().props.onReceipt as () => void;
+  open(); open(); assert.deepEqual(h.receiptReads, ["order"]);
+  assert.equal(panel().props.receiptLoading, true);
+  await h.resolveReceipt({ success: false, code: "UPDATE_FAILED" });
+  assert.match(String(panel().props.receiptError), /Pembayaran tetap berhasil/);
+  open();
+  const receipt = { orderNumber: "AR-000123" };
+  await h.resolveReceipt({ success: true, receipt });
+  const preview = elements(h.render()).find(e => e.type === "ReceiptPanel")!;
+  assert.equal(preview.props.receipt, receipt);
+  (preview.props.onClose as () => void)();
+  assert.equal(elements(h.render()).find(e => e.type === "ReceiptPanel"), undefined);
+  open(); (panel().props.onClose as () => void)();
+  await h.resolveReceipt({ success: true, receipt });
+  assert.equal(elements(h.render()).find(e => e.type === "ReceiptPanel"), undefined);
+  assert.equal(h.requests.length, 0);
 });
 
 test("POS payment transport forwards raw input to the authenticated boundary and sanitizes errors", async () => {
