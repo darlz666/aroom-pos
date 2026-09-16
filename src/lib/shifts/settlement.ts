@@ -1,6 +1,23 @@
 import "server-only";
-import type { PrismaClient } from "../../generated/prisma/client";
+import type { Prisma, PrismaClient } from "../../generated/prisma/client";
 import { calculateExpectedCash, ShiftError } from "./domain";
+
+function successfulShiftPayments(shiftId: string) {
+  return { status: "SUCCEEDED", order: { shiftId, status: "PAID" } } as const;
+}
+
+/** Caller must hold the Shift lock; read on that transaction before persisting closure. */
+export async function getShiftCashSettlement(
+  tx: Prisma.TransactionClient,
+  shift: { id: string; openingCash: number },
+) {
+  const cash = await tx.payment.aggregate({
+    where: { ...successfulShiftPayments(shift.id), method: "CASH" },
+    _sum: { amount: true },
+  });
+  const cashSales = cash._sum.amount ?? 0;
+  return { cashSales, expectedCash: calculateExpectedCash(shift.openingCash, cashSales) };
+}
 
 /** Internal read-only helper. Callers must authorize access to the shift server-side. */
 export async function getShiftSettlement(db: PrismaClient, shiftId: string) {
@@ -19,7 +36,7 @@ export async function getShiftSettlement(db: PrismaClient, shiftId: string) {
     });
     const payments = await tx.payment.groupBy({
       by: ["method"],
-      where: { status: "SUCCEEDED", order: { shiftId: shift.id, status: "PAID" } },
+      where: successfulShiftPayments(shift.id),
       _sum: { amount: true },
     });
     const cashSales = payments.find((payment) => payment.method === "CASH")?._sum.amount ?? 0;

@@ -1,7 +1,8 @@
 import "server-only";
 
 import { Prisma, type PrismaClient, type Shift } from "../../generated/prisma/client";
-import { assertCanCloseShift, assertCanOpenShift, assertCanOperateShift, calculateCashVariance, calculateExpectedCash, parseShiftMoney, ShiftError, validateShiftMoney, type ShiftActor } from "./domain";
+import { assertCanCloseShift, assertCanOpenShift, assertCanOperateShift, calculateCashVariance, parseShiftMoney, ShiftError, validateShiftMoney, type ShiftActor } from "./domain";
+import { getShiftCashSettlement } from "./settlement";
 
 export type CloseShiftInput = {
   shiftId: string;
@@ -28,11 +29,7 @@ export async function closeShift(db: PrismaClient, actor: ShiftActor, input: Clo
     const pending = await tx.payment.findFirst({ where: { order: { shiftId: shift.id }, status: "PENDING" }, select: { id: true } });
     if (unpaid || pending) throw new ShiftError("UNRESOLVED_TRANSACTIONS");
 
-    const cash = await tx.payment.aggregate({
-      where: { order: { shiftId: shift.id }, method: "CASH", status: "SUCCEEDED" },
-      _sum: { amount: true },
-    });
-    const expectedCash = calculateExpectedCash(shift.openingCash, cash._sum.amount ?? 0);
+    const { expectedCash } = await getShiftCashSettlement(tx, shift);
     const countedCash = validateShiftMoney(input.countedCash);
     const variance = calculateCashVariance(countedCash, expectedCash);
     assertCanCloseShift(actor, shift, input.adminCloseReason);

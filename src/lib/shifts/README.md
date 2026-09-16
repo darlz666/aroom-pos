@@ -34,9 +34,9 @@ Closure rejects pending/uncertain attempts and persisted UNPAID orders,
 never auto-cancels them, and requires a discrepancy note for nonzero variance.
 CLOSED shifts cannot be edited or reopened through application workflows.
 Expected cash is openingCash plus SUM(Payment.amount) for CASH/SUCCEEDED payments
-whose orders belong to the shift, never cashReceived or noncash payments.
-`closeShift` queries that sum inside the locked transaction. The
-Payment.amount == Order.total write invariant belongs to later milestones.
+whose PAID orders belong to the shift, never cashReceived or noncash payments.
+`closeShift` obtains expected cash from `getShiftCashSettlement` inside the locked
+transaction, using the same paid-payment filter as the read-only settlement.
 Money must be nonnegative integer rupiah within PostgreSQL Int range; variance
 may be negative. Overflow fails explicitly rather than wrapping or rounding.
 
@@ -49,11 +49,13 @@ validates numeric countedCash and the independent notes, updates Shift and inser
 SHIFT_CLOSED in the same transaction. Any error rolls everything back; no automatic
 retry, provider call, printing, or order/payment mutation occurs.
 
-Existing field mapping: expected/counted cash use `expectedCash`/`countedCash`,
+The `close-shift.ts` entrypoint exports the existing service and input contract.
+Existing field mapping: expected/closing cash use `expectedCash`/`countedCash`,
 cashVariance uses `variance`, discrepancyNote uses `closingNote`, and close time
 and state use `closedAt`/`status`. There is no dedicated admin reason field on Shift:
 the trimmed `adminCloseReason` is preserved separately in `AuditLog.details`, along
-with the discrepancy note, actor/owner IDs and reconciliation values. No schema
+with the discrepancy note, actor/owner IDs and reconciliation values. The closing
+actor (`closedBy`) is persisted as `AuditLog.actorId` and `details.closingActorId`. No schema
 change is needed. `cashierId` is never changed. CLOSED retries fail without changing
 the original reconciliation or inserting another audit. After an interrupted
 request, the UI directs the user to reload persisted register state before retrying.

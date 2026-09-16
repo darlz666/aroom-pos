@@ -32,7 +32,7 @@ function fixture(options: { status?: "OPEN" | "CLOSED" | null; openingCash?: num
       },
       aggregate: async (args: unknown) => {
         events.push("cash");
-        assert.deepEqual(args, { where: { order: { shiftId }, method: "CASH", status: "SUCCEEDED" }, _sum: { amount: true } });
+        assert.deepEqual(args, { where: { order: { shiftId, status: "PAID" }, method: "CASH", status: "SUCCEEDED" }, _sum: { amount: true } });
         return { _sum: { amount: options.cashSum ?? null } };
       },
     },
