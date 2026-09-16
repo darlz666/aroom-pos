@@ -26,6 +26,7 @@ function load(file: string, mocks: Record<string, unknown>, globals = {}) {
   runInNewContext(code, { exports, require: (id: string) => {
     if (id === "./payment-panel") return { PaymentPanel: "PaymentPanel" };
     if (id === "./receipt-panel") return { ReceiptPanel: "ReceiptPanel" };
+    if (id === "./settlement-panel") return { SettlementPanel: "SettlementPanel" };
     if (id in mocks) return mocks[id];
     if (id === "react/jsx-runtime") return require(id);
     throw new Error(`Unexpected component dependency: ${id}`);
