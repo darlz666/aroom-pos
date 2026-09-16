@@ -4,6 +4,7 @@ import { unstable_rethrow } from "next/navigation";
 import { requireUser } from "../auth/authorization";
 import { prisma } from "../db";
 import { OrderError, type OrderErrorCode } from "./domain";
+import { getReceipt } from "./receipt";
 import { cancelOrder, createOrder, editOrder, getActiveUnpaidOrder, listActiveUnpaidOrders, type EditOrderResult } from "./service";
 export type { SafeOrder } from "./service";
 
@@ -91,6 +92,16 @@ export async function getActiveUnpaidOrderAction(orderId: unknown) {
     const actor = await requireUser();
     if (typeof orderId !== "string") throw new OrderError("INVALID_INPUT");
     return { success: true, order: orderDto(await getActiveUnpaidOrder(prisma, actor, orderId)) } as const;
+  } catch (error) {
+    return safeFailure(error, "UPDATE_FAILED");
+  }
+}
+
+export async function getReceiptAction(orderId: unknown) {
+  try {
+    const actor = await requireUser();
+    if (typeof orderId !== "string") throw new OrderError("INVALID_INPUT");
+    return { success: true, receipt: await getReceipt(prisma, actor, orderId) } as const;
   } catch (error) {
     return safeFailure(error, "UPDATE_FAILED");
   }
