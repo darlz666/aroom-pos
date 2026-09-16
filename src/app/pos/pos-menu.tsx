@@ -1,5 +1,6 @@
 "use client";
 
+import { PaymentPanel } from "./payment-panel";
 import { useEffect, useRef, useState } from "react";
 import { cancelOrderAction, createOrderAction, editOrderAction, getActiveUnpaidOrderAction, listActiveUnpaidOrdersAction } from "@/lib/orders/actions";
 import type { CreateOrderInput } from "@/lib/orders/domain";
@@ -36,6 +37,8 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
   const [loadingOrder, setLoadingOrder] = useState(false);
   const [conflicted, setConflicted] = useState(false);
   const [persistedError, setPersistedError] = useState<string | null>(null);
+  const [paymentOrder, setPaymentOrder] = useState<SafeOrder | null>(null);
+  const paymentLock = useRef(false);
   const frozen = !["idle", "validation-error"].includes(creation.state);
   function editDraft() {
     if (locked.current) return false;
@@ -87,7 +90,7 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
   const total = cart.reduce((sum, line) => sum + line.product.price * line.quantity, 0);
 
   function add(product: MenuProduct) {
-    if (!product.available) return;
+    if (paymentLock.current || !product.available) return;
     if (selectedOrder) {
       void mutatePersisted({ type: "ADD_ITEM", productId: product.id, quantity: 1 });
       return;
@@ -101,7 +104,7 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
   }
 
   async function runMutation(operation?: EditOperation, reason?: string) {
-    if (!selectedOrder || orderMutationPending.current || conflictLock.current) return;
+    if (paymentLock.current || !selectedOrder || orderMutationPending.current || conflictLock.current) return;
     orderMutationPending.current = true;
     setPersistedPending(true);
     setPersistedError(null);
@@ -135,7 +138,7 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
   const cancelPersisted = (reason?: string) => runMutation(undefined, reason);
 
   async function reloadPersisted(orderId: string, explicit = false) {
-    if (orderMutationPending.current || (conflictLock.current && !explicit)) return;
+    if (paymentLock.current || orderMutationPending.current || (conflictLock.current && !explicit)) return;
     orderMutationPending.current = true;
     setPersistedPending(true);
     setLoadingOrder(true);
@@ -166,9 +169,21 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
     setCart(current => current.map(line => line.product.id === id ? { ...line, quantity: Math.max(1, Math.min(99, line.quantity + delta)) } : line));
   }
 
+  if (paymentOrder) return <PaymentPanel key={paymentOrder.id + ":" + paymentOrder.revision} order={paymentOrder}
+    onPaid={() => { setSelectedOrder(null); setOrderRefresh(value => value + 1); }}
+    onClose={() => {
+      paymentLock.current = false;
+      setPaymentOrder(null);
+      if (selectedOrder) {
+        conflictLock.current = true;
+        setConflicted(true);
+        void reloadPersisted(selectedOrder.id, true);
+      }
+    }} />;
+
   return (
     <div className="flex min-h-0 flex-1 flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.65fr)]">
-      <ActiveOrders refreshToken={orderRefresh} selectedOrder={selectedOrder} pending={persistedPending} loadingOrder={loadingOrder} conflicted={conflicted} mutationError={persistedError} onSelect={order => { if (!orderMutationPending.current && !conflictLock.current) setSelectedOrder(order); }} onMutate={mutatePersisted} onCancel={cancelPersisted} onReload={reloadPersisted} />
+      <ActiveOrders refreshToken={orderRefresh} selectedOrder={selectedOrder} pending={persistedPending} loadingOrder={loadingOrder} conflicted={conflicted} mutationError={persistedError} onPay={() => { if (selectedOrder?.status === "UNPAID" && !orderMutationPending.current && !conflictLock.current && !paymentLock.current) { paymentLock.current = true; setPaymentOrder(selectedOrder); } }} onSelect={order => { if (!paymentLock.current && !orderMutationPending.current && !conflictLock.current) setSelectedOrder(order); }} onMutate={mutatePersisted} onCancel={cancelPersisted} onReload={reloadPersisted} />
       <section aria-label="Menu" className="min-h-0 min-w-0 lg:flex lg:flex-col">
         <nav aria-label="Kategori menu" className="flex shrink-0 gap-2 overflow-x-auto border-b border-[#dedfd5] p-4">
           {[{ id: null, name: "Semua" }, ...categories].map(category => (
@@ -243,8 +258,9 @@ function ActiveOrders({
   onSelect,
   onMutate,
   onCancel,
-  onReload, pending, loadingOrder, conflicted, mutationError,
+  onPay, onReload, pending, loadingOrder, conflicted, mutationError,
 }: {
+  onPay: () => void;
   pending: boolean;
   loadingOrder: boolean;
   conflicted: boolean;
@@ -310,6 +326,7 @@ function ActiveOrders({
     {selectedOrder && <div className="mt-5 rounded-xl border border-[#a8aea0] p-4" aria-label={`Detail ${selectedOrder.orderNumber}`}>
       <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="text-lg font-semibold">Edit {selectedOrder.orderNumber}</h3><p className="text-sm text-[#62685c]">{selectedOrder.status} · {selectedOrder.orderType} · Revisi {selectedOrder.revision} · Total {rupiah(selectedOrder.total)}</p></div><button type="button" className={control} disabled={pending} onClick={() => void select(selectedOrder, true)}>Muat Ulang Pesanan</button></div>
       <p className="mt-2 text-sm text-[#62685c]">Pesanan tersimpan. Total dari server. Setiap perubahan langsung disimpan. Pilih produk dari menu untuk menambah item ke pesanan ini.</p><ul className="mt-3 divide-y divide-[#dedfd5]">{selectedOrder.items.map(item => <li key={item.id} className="flex flex-wrap items-center justify-between gap-2 py-3"><span className="min-w-0 break-words"><strong>{item.productName}</strong><span className="ml-2 text-sm text-[#62685c]">{rupiah(item.unitPrice)} / item</span></span><span className="flex items-center gap-2"><button type="button" className={control} aria-label={`Kurangi ${item.productName}`} disabled={pending || conflicted || item.quantity <= 1} onClick={() => void onMutate({ type: "SET_QUANTITY", orderItemId: item.id, quantity: item.quantity - 1 })}>−</button><span className="min-w-6 text-center">{item.quantity}</span><button type="button" className={control} aria-label={`Tambah jumlah ${item.productName}`} disabled={pending || conflicted || item.quantity >= 99} onClick={() => void onMutate({ type: "SET_QUANTITY", orderItemId: item.id, quantity: item.quantity + 1 })}>+</button><button type="button" className={`${control} text-[#8b3026]`} aria-label={`Hapus ${item.productName}`} disabled={pending || conflicted} onClick={() => void onMutate({ type: "REMOVE_ITEM", orderItemId: item.id })}>Hapus</button></span></li>)}</ul>
+      <button type="button" className={control + " mt-3 bg-[#344631] text-white"} disabled={pending || conflicted || selectedOrder.status !== "UNPAID"} onClick={onPay}>Bayar pesanan</button>
       {confirmCancel ? <div className="mt-3 rounded-lg border border-[#8b3026] p-3"><p className="font-semibold">Batalkan {selectedOrder.orderNumber}?</p><label htmlFor="cancel-reason" className="mt-2 block text-sm">Alasan (opsional)</label><input id="cancel-reason" disabled={pending || conflicted} value={reason} onChange={event => setReason(event.target.value)} maxLength={500} placeholder="Alasan (opsional)" className="mt-2 min-h-12 w-full rounded-lg border border-[#a8aea0] px-3" /><div className="mt-2 flex flex-wrap gap-2"><button type="button" className={`${control} bg-[#8b3026] text-white hover:bg-[#70271f]`} disabled={pending || conflicted || reason.length > 500} onClick={() => void cancel()}>Ya, batalkan</button><button type="button" className={control} disabled={pending} onClick={() => setConfirmCancel(false)}>Kembali</button></div></div> : <button type="button" className={`${control} mt-3 text-[#8b3026]`} disabled={pending || conflicted} onClick={() => setConfirmCancel(true)}>Batalkan pesanan</button>}
       <button type="button" className={control + " mt-3"} disabled={pending || conflicted} onClick={() => onSelect(null)}>Kembali ke Pesanan Baru</button>
     </div>}

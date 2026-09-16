@@ -24,6 +24,7 @@ function load(file: string, mocks: Record<string, unknown>, globals = {}) {
   const code = ts.transpileModule(source(file), { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
   const exports: Record<string, (...args: never[]) => unknown> = {};
   runInNewContext(code, { exports, require: (id: string) => {
+    if (id === "./payment-panel") return { PaymentPanel: "PaymentPanel" };
     if (id in mocks) return mocks[id];
     if (id === "react/jsx-runtime") return require(id);
     throw new Error(`Unexpected component dependency: ${id}`);
@@ -479,4 +480,152 @@ test("accepted tablet responsive classes retain the 1024px menu/cart transition"
   assert.match(client, /lg:min-h-0 lg:flex-1 lg:overflow-y-auto/);
   assert.match(source("./page.tsx"), /lg:h-dvh/);
   assert.doesNotMatch(client, /(?:sm|md|xl):grid-cols-\[minmax/);
+});
+
+function paymentHarness() {
+  const slots: unknown[] = [];
+  let cursor = 0;
+  let keys = 0;
+  let paid = 0;
+  let closed = 0;
+  const navigator = { onLine: true };
+  const requests: Record<string, unknown>[] = [];
+  let resolve!: (value: unknown) => void;
+  let reject!: (error: unknown) => void;
+  const component = load("./payment-panel.tsx", {
+    react: {
+      useState: (initial: unknown) => {
+        const i = cursor++;
+        if (!(i in slots)) slots[i] = initial;
+        return [slots[i], (value: unknown) => { slots[i] = value; }];
+      },
+      useRef: (initial: unknown) => {
+        const i = cursor++;
+        if (!(i in slots)) slots[i] = { current: initial };
+        return slots[i];
+      },
+    },
+    "./payment-action": { submitPaymentAction: (input: Record<string, unknown>) => {
+      requests.push(JSON.parse(JSON.stringify(input)));
+      return new Promise((yes, no) => { resolve = yes; reject = no; });
+    } },
+  }, { navigator, crypto: { randomUUID: () => `attempt-${++keys}` } });
+  const render = () => { cursor = 0; return component.PaymentPanel({ order: orderState(), onPaid: () => paid++, onClose: () => closed++ } as never); };
+  const button = (label: string) => elements(render()).find(e => e.type === "button" && text(e) === label)!;
+  const click = (label: string) => (button(label).props.onClick as () => void)();
+  const input = (value: string | boolean) => {
+    const node = elements(render()).find(e => e.type === "input" && (typeof value === "boolean" ? e.props.type === "checkbox" : e.props.type !== "checkbox"))!;
+    (node.props.onChange as (event: unknown) => void)({ target: { value, checked: value } });
+  };
+  const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
+  return { render, button, click, input, requests, navigator, paid: () => paid, closed: () => closed,
+    resolve: async (value: unknown) => { resolve(value); await flush(); },
+    reject: async () => { reject(new Error("secret transport error")); await flush(); } };
+}
+const paymentSuccess = { success: true, payment: { method: "CASH", status: "SUCCEEDED", amount: 54000, cashReceived: 60000, changeAmount: 6000, edcReference: null, replayed: false } };
+
+test("cash payment validates integer rupiah, blocks duplicate taps and renders server success", async () => {
+  const h = paymentHarness();
+  assert.equal(h.button("QRIS (belum tersedia)").props.disabled, true);
+  for (const invalid of ["", "53999", "60000.5", "-1", "1e6", "2147483648"]) {
+    h.input(invalid); assert.equal(h.button("Konfirmasi uang diterima").props.disabled, true);
+    h.click("Konfirmasi uang diterima"); assert.equal(h.requests.length, 0);
+  }
+  h.input("60000"); assert.match(text(h.render()), /Kembalian: Rp6.000/);
+  const close = h.button("Kembali ke pesanan").props.onClick as () => void;
+  const submit = h.button("Konfirmasi uang diterima").props.onClick as () => void;
+  submit(); submit(); close();
+  assert.equal(h.closed(), 0);
+  assert.deepEqual(h.requests, [{ orderId: "order", expectedRevision: 3, attemptIdentifier: "attempt-1", method: "CASH", cashReceived: 60000 }]);
+  assert.equal(h.button("Memproses...").props.disabled, true);
+  await h.resolve(paymentSuccess);
+  assert.match(text(h.render()), /SUCCEEDED.*PAID.*Rp54.000.*Rp60.000.*Rp6.000/);
+  assert.equal(h.paid(), 1); submit(); assert.equal(h.requests.length, 1);
+  h.click("Selesai"); assert.equal(h.closed(), 1);
+});
+
+test("EDC requires physical approval and sends only optional reference plus attempt identity", async () => {
+  for (const reference of ["", "  EDC-42  "]) {
+    const h = paymentHarness(); h.click("BCA EDC"); h.input(reference);
+    assert.match(text(h.render()), /terminal BCA EDC.*APPROVED/);
+    h.click("Konfirmasi pembayaran EDC"); assert.equal(h.requests.length, 0);
+    h.input(true); h.click("Konfirmasi pembayaran EDC");
+    assert.deepEqual(h.requests[0], { orderId: "order", expectedRevision: 3, attemptIdentifier: "attempt-1", method: "BCA_EDC", ...(reference ? { edcReference: "EDC-42" } : {}) });
+    await h.resolve({ success: true, payment: { ...paymentSuccess.payment, method: "BCA_EDC", cashReceived: null, changeAmount: null, edcReference: reference.trim() || null } });
+    assert.match(text(h.render()), /Pembayaran berhasil.*BCA EDC/);
+    assert.doesNotMatch(text(h.render()), /Kembalian/);
+  }
+});
+
+test("interrupted payments retry the exact snapshot and keep edits and exit locked", async () => {
+  for (const transport of [true, false]) {
+    const h = paymentHarness(); h.input("60000"); h.click("Konfirmasi uang diterima");
+    if (transport) await h.reject(); else await h.resolve({ success: false, code: "PAYMENT_FAILED" });
+    assert.equal(h.button("Kembali ke pesanan").props.disabled, true);
+    assert.ok(elements(h.render()).some(e => e.type === "fieldset" && e.props.disabled));
+    h.click("BCA EDC"); h.input("90000"); h.click("Kembali ke pesanan");
+    assert.equal(h.closed(), 0);
+    h.click("Periksa pembayaran yang sama");
+    assert.deepEqual(h.requests[1], h.requests[0]);
+    await h.resolve({ ...paymentSuccess, payment: { ...paymentSuccess.payment, replayed: true } });
+    assert.equal(h.paid(), 1); assert.match(text(h.render()), /ditemukan kembali/);
+  }
+});
+
+test("offline submissions are explicit and not queued; order rejection requires reload", async () => {
+  const h = paymentHarness(); h.input("60000"); h.navigator.onLine = false;
+  h.click("Konfirmasi uang diterima"); assert.equal(h.requests.length, 0);
+  assert.match(text(h.render()), /Tidak ada koneksi/);
+  h.navigator.onLine = true; assert.equal(h.requests.length, 0);
+  h.input("70000"); h.click("Konfirmasi uang diterima");
+  assert.equal(h.requests[0].cashReceived, 70000);
+  await h.resolve({ success: false, code: "REVISION_CONFLICT" });
+  assert.match(text(h.render()), /muat ulang pesanan/);
+  h.click("Konfirmasi uang diterima"); assert.equal(h.requests.length, 1);
+  h.click("Kembali ke pesanan"); assert.equal(h.closed(), 1);
+});
+
+test("later rejection cannot release an uncertain payment or replace its attempt", async () => {
+  const h = paymentHarness(); h.input("60000"); h.click("Konfirmasi uang diterima"); await h.reject();
+  h.click("Periksa pembayaran yang sama"); await h.resolve({ success: false, code: "FORBIDDEN" });
+  assert.match(text(h.render()), /belum terselesaikan/);
+  assert.equal(h.button("Kembali ke pesanan").props.disabled, true);
+  assert.equal(h.button("Periksa pembayaran yang sama").props.disabled, true);
+  h.click("Kembali ke pesanan"); h.click("Periksa pembayaran yang sama");
+  assert.equal(h.closed(), 0); assert.equal(h.requests.length, 2);
+});
+
+test("POS payment entry locks stale order handlers and closes through authoritative reload", async () => {
+  const h = persistedHarness(); await h.select();
+  const add = h.button("Tambah Latte").props.onClick as () => void;
+  h.click("Bayar pesanan");
+  let panel = elements(h.render()).find(e => e.type === "PaymentPanel")!;
+  assert.equal((panel.props.order as { revision: number }).revision, 3);
+  add(); assert.equal(h.requests.length, 0);
+  h.detail(orderState(8)); (panel.props.onClose as () => void)(); await h.flush();
+  h.click("Bayar pesanan"); panel = elements(h.render()).find(e => e.type === "PaymentPanel")!;
+  assert.equal((panel.props.order as { revision: number }).revision, 8);
+  (panel.props.onPaid as () => void)(); h.list([]);
+  panel = elements(h.render()).find(e => e.type === "PaymentPanel")!;
+  (panel.props.onClose as () => void)(); await h.flush();
+  assert.equal(h.button("Bayar pesanan"), undefined);
+  assert.match(text(h.render()), /Pesanan Baru/);
+});
+
+test("POS payment transport forwards raw input to the authenticated boundary and sanitizes errors", async () => {
+  class PaymentError extends Error { constructor(public code: string) { super(code); } }
+  let error: unknown;
+  let received: unknown;
+  const action = load("./payment-action.ts", {
+    "next/navigation": { unstable_rethrow: (value: unknown) => { if (value === "redirect") throw value; } },
+    "@/lib/payments/domain": { PaymentError },
+    "@/lib/payments/server": { confirmManualPayment: async (input: unknown) => { received = input; if (error) throw error; return paymentSuccess.payment; } },
+  });
+  const input = { orderId: "order", actorId: "untrusted" };
+  await action.submitPaymentAction(input as never); assert.equal(received, input);
+  error = new PaymentError("REVISION_CONFLICT");
+  assert.equal((await action.submitPaymentAction(input as never) as { code: string }).code, "REVISION_CONFLICT");
+  error = new Error("secret database details");
+  assert.deepEqual(JSON.parse(JSON.stringify(await action.submitPaymentAction(input as never))), { success: false, code: "PAYMENT_FAILED" });
+  error = "redirect"; await assert.rejects(async () => action.submitPaymentAction(input as never));
 });
