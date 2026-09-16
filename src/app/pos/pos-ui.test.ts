@@ -160,14 +160,17 @@ function creationHarness() {
       useState: (initial: unknown) => {
         const i = cursor++;
         if (!(i in slots)) slots[i] = initial;
-        return [slots[i], (next: unknown) => { slots[i] = typeof next === "function" ? next(slots[i]) : next; }];
+        return [slots[i], (value: unknown) => { slots[i] = typeof value === "function" ? value(slots[i]) : value; }];
       },
       useRef: (initial: unknown) => {
         const i = cursor++;
         if (!(i in slots)) slots[i] = { current: initial };
         return slots[i];
+        },
+        useEffect: (callback: () => void) => {
+          callback();
+        },
       },
-    },
     "@/lib/orders/actions": { createOrderAction: (input: unknown) => {
       requests.push(JSON.parse(JSON.stringify(input)));
       return new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -493,23 +496,33 @@ function paymentHarness() {
   let resolve!: (value: unknown) => void;
   let reject!: (error: unknown) => void;
   const component = load("./payment-panel.tsx", {
-    react: {
-      useState: (initial: unknown) => {
-        const i = cursor++;
-        if (!(i in slots)) slots[i] = initial;
-        return [slots[i], (value: unknown) => { slots[i] = value; }];
-      },
-      useRef: (initial: unknown) => {
-        const i = cursor++;
-        if (!(i in slots)) slots[i] = { current: initial };
-        return slots[i];
-      },
+  react: {
+    useState: (initial: unknown) => {
+      const i = cursor++;
+      if (!(i in slots)) slots[i] = initial;
+      return [slots[i], (value: unknown) => { slots[i] = typeof value === "function" ? value(slots[i]) : value; }];
     },
+
+    useRef: (initial: unknown) => {
+      const i = cursor++;
+      if (!(i in slots)) slots[i] = { current: initial };
+      return slots[i];
+    },
+
+    useEffect: (callback: () => void) => {
+      callback();
+    },
+  },
     "./payment-action": { submitPaymentAction: (input: Record<string, unknown>) => {
       requests.push(JSON.parse(JSON.stringify(input)));
       return new Promise((yes, no) => { resolve = yes; reject = no; });
     } },
-  }, { navigator, crypto: { randomUUID: () => `attempt-${++keys}` } });
+  }, {
+    navigator,
+    crypto: { randomUUID: () => `attempt-${++keys}` },
+    setTimeout: (callback: () => void) => { callback(); return 1; },
+    clearTimeout() {},
+  });
   const render = () => { cursor = 0; return component.PaymentPanel({ order: orderState(), onPaid: () => paid++, onClose: () => closed++ } as never); };
   const button = (label: string) => elements(render()).find(e => e.type === "button" && text(e) === label)!;
   const click = (label: string) => (button(label).props.onClick as () => void)();
