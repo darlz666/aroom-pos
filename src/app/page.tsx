@@ -24,6 +24,7 @@ export default async function Home() {
           <p className="mt-1 text-xs tracking-[0.25em] text-[#62685c]">COFFEE BAR</p>
         </div>
         <div className="flex flex-wrap items-center gap-6">
+          <Link href="/orders" className="inline-flex min-h-14 items-center rounded-lg border border-[#a8aea0] px-6 py-3 font-semibold hover:bg-[#e9eade] focus-visible:outline-2 focus-visible:outline-offset-4">Riwayat pesanan</Link>
           <div><p className="text-lg font-semibold break-words">{user.name}</p><p className="text-sm text-[#62685c]">{user.role}</p></div>
           <form action={logout}>
             <button type="submit" className="min-h-14 rounded-lg border border-[#a8aea0] px-6 py-3 font-semibold hover:bg-[#e9eade] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#3e503c]">Logout</button>

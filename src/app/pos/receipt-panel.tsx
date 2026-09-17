@@ -10,13 +10,14 @@ const dateTime = (value: string) => new Intl.DateTimeFormat("id-ID", {
   timeZone: "Asia/Jakarta", dateStyle: "medium", timeStyle: "short",
 }).format(new Date(value));
 
-export function ReceiptPanel({ receipt, onClose, printerAdapter }: {
-  receipt: Receipt; onClose: () => void; printerAdapter?: PrinterAdapter;
+export function ReceiptPanel({ receipt, onClose, printerAdapter, copy = false }: {
+  receipt: Receipt; onClose: () => void; printerAdapter?: PrinterAdapter; copy?: boolean;
 }) {
   const { payment } = receipt;
   return <section aria-label="Pratinjau struk" className="col-span-full overflow-y-auto rounded-xl border border-[#a8aea0] bg-[#fffefa] p-6">
     <div className="mx-auto max-w-md space-y-4 break-words">
       <h2 className="text-center text-2xl font-semibold">AROOM Coffee Bar</h2>
+      {copy && <p className="text-center text-xl font-semibold">COPY / SALINAN</p>}
       <div>
         <p>Nomor pesanan: {receipt.orderNumber}</p>
         <p>Kasir: {receipt.cashier}</p>
@@ -39,14 +40,14 @@ export function ReceiptPanel({ receipt, onClose, printerAdapter }: {
         </>}
         {payment.method === "BCA_EDC" && payment.edcReference && <p>Referensi EDC: {payment.edcReference}</p>}
       </div>
-      <ReceiptPrintControls key={receipt.orderNumber} receipt={receipt} adapter={printerAdapter} />
+      <ReceiptPrintControls key={copy ? `${receipt.orderNumber}:copy` : receipt.orderNumber} receipt={receipt} adapter={printerAdapter} copy={copy} />
       <button type="button" onClick={onClose} className="min-h-12 w-full rounded-lg border border-[#a8aea0] px-4 py-2 font-semibold hover:bg-[#e9eade]">Tutup struk</button>
     </div>
   </section>;
 }
 
-function ReceiptPrintControls({ receipt, adapter }: { receipt: Receipt; adapter?: PrinterAdapter }) {
-  const [job] = useState(() => createReceiptPrintJob(receipt, adapter));
+function ReceiptPrintControls({ receipt, adapter, copy }: { receipt: Receipt; adapter?: PrinterAdapter; copy: boolean }) {
+  const [job] = useState(() => createReceiptPrintJob(receipt, adapter, copy));
   const [state, setState] = useState<PrintResult | { status: "idle" | "printing" }>({ status: "idle" });
   const busy = useRef(false);
   async function print() {
@@ -60,7 +61,7 @@ function ReceiptPrintControls({ receipt, adapter }: { receipt: Receipt; adapter?
   return <div className="space-y-2">
     <button type="button" onClick={() => void print()} disabled={state.status === "printing" || state.status === "succeeded"}
       className="min-h-12 w-full rounded-lg border border-[#a8aea0] px-4 py-2 font-semibold hover:bg-[#e9eade] disabled:opacity-40 disabled:cursor-not-allowed">
-      {state.status === "printing" ? "Mencetak..." : failed ? "Coba Cetak Lagi" : "Cetak Struk"}
+      {state.status === "printing" ? "Mencetak..." : failed ? "Coba Cetak Lagi" : copy ? "Cetak Salinan" : "Cetak Struk"}
     </button>
     {state.status === "printing" && <p role="status">Sedang mencetak struk...</p>}
     {state.status === "succeeded" && <p role="status">Permintaan cetak berhasil.</p>}

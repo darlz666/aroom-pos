@@ -20,8 +20,8 @@ let printing = false;
 /** Input must be the successful getReceiptAction response, never cart state.
  * getReceipt enforces PAID + SUCCEEDED and authorization on the server.
  * Capture the formatted snapshot once; retries never reread mutable data.
- * A successful job is terminal. COPY formatting is available for a future
- * explicit reprint flow; this does not provide historical receipt access. */
+ * A successful job is terminal. Historical reprints explicitly request COPY
+ * formatting after fetching an authorized receipt through getReceiptAction. */
 export function createReceiptPrintJob(receipt: Receipt, adapter: PrinterAdapter = unconfiguredPrinter, copy = false) {
   const snapshot = formatReceipt(receipt, copy);
   let succeeded = false;
