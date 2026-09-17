@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { test } from "node:test";
 import type { PrismaClient } from "../../generated/prisma/client";
+import { createReceiptPrintJob } from "../../lib/printing/printer";
+import { FakePrinterAdapter } from "../../lib/printing/testing/fake-printer";
 
 type StoredProduct = {
   id: string;
@@ -340,6 +342,18 @@ test("POS lifecycle: open, create, edit, pay, receipt, settle, close", async (t)
     edcReference: null,
     succeededAt: paid.succeededAt,
   });
+
+  const savedFinancialState = structuredClone({ orders: state.orders, payments: state.payments, audit: state.auditActions });
+  const printer = new FakePrinterAdapter([() => { throw new Error("Printer disconnected"); }]);
+  const printJob = createReceiptPrintJob(receipt, printer);
+  assert.equal((await printJob.print()).status, "failed");
+  assert.equal(state.orders[0].status, "PAID");
+  assert.equal(state.payments[0].status, "SUCCEEDED");
+  assert.deepEqual({ orders: state.orders, payments: state.payments, audit: state.auditActions }, savedFinancialState);
+  assert.equal((await printJob.print()).status, "succeeded");
+  assert.strictEqual(printer.attempts[0], printer.attempts[1]);
+  assert.equal(state.payments.length, 1);
+  assert.deepEqual({ orders: state.orders, payments: state.payments, audit: state.auditActions }, savedFinancialState);
 
   const settlement = await getShiftSettlement(state.db, opened.shift.id);
   assert.deepEqual({

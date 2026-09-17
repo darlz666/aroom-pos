@@ -1,14 +1,18 @@
 "use client";
 
-import type { getReceiptAction } from "@/lib/orders/actions";
+import { useRef, useState } from "react";
+import { createReceiptPrintJob, type PrinterAdapter, type PrintResult } from "@/lib/printing/printer";
+import type { Receipt } from "@/lib/printing/receipt-format";
 
-export type Receipt = Extract<Awaited<ReturnType<typeof getReceiptAction>>, { success: true }>["receipt"];
+export type { Receipt } from "@/lib/printing/receipt-format";
 const rupiah = (value: number) => `Rp${new Intl.NumberFormat("id-ID").format(value)}`;
 const dateTime = (value: string) => new Intl.DateTimeFormat("id-ID", {
   timeZone: "Asia/Jakarta", dateStyle: "medium", timeStyle: "short",
 }).format(new Date(value));
 
-export function ReceiptPanel({ receipt, onClose }: { receipt: Receipt; onClose: () => void }) {
+export function ReceiptPanel({ receipt, onClose, printerAdapter }: {
+  receipt: Receipt; onClose: () => void; printerAdapter?: PrinterAdapter;
+}) {
   const { payment } = receipt;
   return <section aria-label="Pratinjau struk" className="col-span-full overflow-y-auto rounded-xl border border-[#a8aea0] bg-[#fffefa] p-6">
     <div className="mx-auto max-w-md space-y-4 break-words">
@@ -35,7 +39,31 @@ export function ReceiptPanel({ receipt, onClose }: { receipt: Receipt; onClose: 
         </>}
         {payment.method === "BCA_EDC" && payment.edcReference && <p>Referensi EDC: {payment.edcReference}</p>}
       </div>
+      <ReceiptPrintControls key={receipt.orderNumber} receipt={receipt} adapter={printerAdapter} />
       <button type="button" onClick={onClose} className="min-h-12 w-full rounded-lg border border-[#a8aea0] px-4 py-2 font-semibold hover:bg-[#e9eade]">Tutup struk</button>
     </div>
   </section>;
+}
+
+function ReceiptPrintControls({ receipt, adapter }: { receipt: Receipt; adapter?: PrinterAdapter }) {
+  const [job] = useState(() => createReceiptPrintJob(receipt, adapter));
+  const [state, setState] = useState<PrintResult | { status: "idle" | "printing" }>({ status: "idle" });
+  const busy = useRef(false);
+  async function print() {
+    if (busy.current) return;
+    busy.current = true;
+    setState({ status: "printing" });
+    try { setState(await job.print()); }
+    finally { busy.current = false; }
+  }
+  const failed = state.status === "failed" || state.status === "busy";
+  return <div className="space-y-2">
+    <button type="button" onClick={() => void print()} disabled={state.status === "printing" || state.status === "succeeded"}
+      className="min-h-12 w-full rounded-lg border border-[#a8aea0] px-4 py-2 font-semibold hover:bg-[#e9eade] disabled:opacity-40 disabled:cursor-not-allowed">
+      {state.status === "printing" ? "Mencetak..." : failed ? "Coba Cetak Lagi" : "Cetak Struk"}
+    </button>
+    {state.status === "printing" && <p role="status">Sedang mencetak struk...</p>}
+    {state.status === "succeeded" && <p role="status">Permintaan cetak berhasil.</p>}
+    {failed && <p role="alert" className="text-[#8b3026]">{state.error}</p>}
+  </div>;
 }

@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { test } from "node:test";
 import type { Prisma, PrismaClient } from "../../generated/prisma/client";
+import { createReceiptPrintJob } from "../printing/printer";
+import { FakePrinterAdapter } from "../printing/testing/fake-printer";
 
 test("receipt read projection", async (t) => {
   // Allow this server-only service to run in the plain Node test runner.
@@ -55,6 +57,20 @@ test("receipt read projection", async (t) => {
     for (const status of ["UNPAID", "CANCELLED"]) {
       await assert.rejects(getReceipt(fixture({ ...stored, status }), actor, orderId), { code: "ORDER_NOT_FOUND" });
     }
+  });
+  await t.test("only a server-authorized paid receipt reaches the printer", async () => {
+    const printer = new FakePrinterAdapter();
+    for (const order of [
+      { ...stored, status: "UNPAID" }, { ...stored, status: "CANCELLED" },
+      { ...stored, payments: [] },
+      { ...stored, payments: [{ ...stored.payments[0], status: "PENDING" }] },
+      { ...stored, shiftId: randomUUID() },
+    ]) {
+      await assert.rejects(async () => createReceiptPrintJob(await getReceipt(fixture(order), actor, orderId), printer).print());
+    }
+    assert.equal(printer.attempts.length, 0);
+    assert.equal((await createReceiptPrintJob(await getReceipt(fixture(), actor, orderId), printer).print()).status, "succeeded");
+    assert.equal(printer.attempts.length, 1);
   });
   await t.test("missing order, missing payment and unsuccessful payments are rejected", async () => {
     await assert.rejects(getReceipt(fixture(null), actor, orderId), { code: "ORDER_NOT_FOUND" });
