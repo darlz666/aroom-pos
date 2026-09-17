@@ -1,7 +1,6 @@
 import "server-only";
 import type { PrismaClient } from "../../generated/prisma/client";
-import { assertCanOpenShift, assertCanOperateShift, ShiftError, type ShiftActor } from "../shifts/domain";
-import { findActiveShift } from "../shifts/service";
+import { assertCanOpenShift, assertCanViewShift, ShiftError, type ShiftActor } from "../shifts/domain";
 import { OrderError } from "./domain";
 
 /** Read projection only. Actor must come from fresh server authentication. */
@@ -11,14 +10,12 @@ export async function getReceipt(db: PrismaClient, actor: ShiftActor, orderId: s
     if (typeof orderId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orderId)) {
       throw new OrderError("INVALID_INPUT");
     }
-    const shift = await findActiveShift(db);
-    assertCanOperateShift(actor, shift);
     const order = await db.order.findUnique({
       where: { id: orderId.toLowerCase() },
       select: {
-        shiftId: true, status: true, orderNumber: true, orderType: true,
+        shift: { select: { cashierId: true } }, status: true, orderNumber: true, orderType: true,
         cashier: { select: { name: true } }, createdAt: true, paidAt: true, total: true,
-        items: { orderBy: { productId: "asc" }, select: {
+        items: { orderBy: [{ productId: "asc" }, { id: "asc" }], select: {
           productNameSnapshot: true, unitPriceSnapshot: true, quantity: true, lineTotal: true,
         } },
         payments: { where: { status: "SUCCEEDED" }, select: {
@@ -28,7 +25,7 @@ export async function getReceipt(db: PrismaClient, actor: ShiftActor, orderId: s
       },
     });
     if (!order) throw new OrderError("ORDER_NOT_FOUND");
-    if (order.shiftId !== shift!.id) throw new OrderError("FORBIDDEN");
+    assertCanViewShift(actor, order.shift);
     const payment = order.payments[0];
     if (order.status !== "PAID" || !payment) throw new OrderError("ORDER_NOT_FOUND");
     return {
@@ -45,7 +42,7 @@ export async function getReceipt(db: PrismaClient, actor: ShiftActor, orderId: s
     };
   } catch (error) {
     if (error instanceof OrderError) throw error;
-    if (error instanceof ShiftError) throw new OrderError(error.code === "FORBIDDEN" ? "FORBIDDEN" : "NO_ACTIVE_SHIFT");
+    if (error instanceof ShiftError && error.code === "FORBIDDEN") throw new OrderError("FORBIDDEN");
     throw new OrderError("UPDATE_FAILED");
   }
 }

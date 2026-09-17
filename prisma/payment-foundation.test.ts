@@ -1,14 +1,26 @@
 import "dotenv/config";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
 import { test } from "node:test";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient, type Prisma } from "../src/generated/prisma/client";
-import { createOrder, cancelOrder, editOrder } from "../src/lib/orders/service";
-import { closeShift } from "../src/lib/shifts/service";
-import { recordManualPayment } from "../src/lib/payments/service";
 
 test("payment PostgreSQL authority, atomicity, retries, constraints and existing workflows", async t => {
+  // Install the test-only marker stub before importing server modules.
+  const require = createRequire(import.meta.url);
+  const serverOnlyPath = require.resolve("server-only");
+  const originalServerOnly = require.cache[serverOnlyPath];
+  require.cache[serverOnlyPath] = { exports: {} } as NodeModule;
+  t.after(() => {
+    if (originalServerOnly) require.cache[serverOnlyPath] = originalServerOnly;
+    else delete require.cache[serverOnlyPath];
+  });
+  const { createOrder, cancelOrder, editOrder } = await import("../src/lib/orders/service");
+  const { closeShift } = await import("../src/lib/shifts/service");
+  const { recordManualPayment } = await import("../src/lib/payments/service");
+  const { getHistoricalOrder, listOrderHistory } = await import("../src/lib/orders/history");
+  const { getReceipt } = await import("../src/lib/orders/receipt");
   assert.notEqual(process.env.NODE_ENV, "production");
   assert.ok(process.env.DATABASE_URL);
   assert.ok(["localhost", "127.0.0.1", "[::1]"].includes(new URL(process.env.DATABASE_URL).hostname));
@@ -111,6 +123,48 @@ test("payment PostgreSQL authority, atomicity, retries, constraints and existing
       assert.equal(closed.expectedCash, cash._sum.amount);
       assert.equal((await recordManualPayment(db, cashier, saved)).replayed, true);
       await assert.rejects(recordManualPayment(db, cashier, { ...saved, attemptIdentifier: randomUUID() }), { code: "NO_ACTIVE_SHIFT" });
+    });
+    await t.test("historical reads after closure preserve financial state and follow shift ownership in PostgreSQL", async () => {
+      const receipt = await getReceipt(db, cashier, saved.orderId);
+      await db.product.update({ where: { id: product.id }, data: { name: "Changed menu", price: 99000 } });
+      const assistedShift = await db.shift.create({ data: { cashierId: cashier.id, openingCash: 0 } });
+      const assisted = await createOrder(db, admin, { createIdempotencyKey: randomUUID(), orderType: "TAKEAWAY", items: [{ productId: product.id, quantity: 1 }] });
+      await cancelOrder(db, cashier, { orderId: assisted.id, expectedRevision: assisted.revision });
+      await closeShift(db, cashier, { shiftId: assistedShift.id, countedCash: 0 });
+      const anotherShift = await db.shift.create({ data: { cashierId: other.id, openingCash: 0 } });
+      const foreign = await createOrder(db, other, { createIdempotencyKey: randomUUID(), orderType: "DINE_IN", items: [{ productId: product.id, quantity: 1 }] });
+      // Equal timestamps exercise the UUID tie breaker in PostgreSQL, not a JS double.
+      const tiedAt = new Date("2026-09-17T00:00:00Z");
+      await db.order.updateMany({ where: { shiftId: shift.id }, data: { createdAt: tiedAt } });
+      const unchanged = async () => ({ financial: await snapshot(),
+        items: await db.orderItem.findMany({ orderBy: { id: "asc" } }), audits: await db.auditLog.findMany({ orderBy: { id: "asc" } }) });
+      const start = await unchanged();
+      const expectedReceipt = { ...receipt, createdAt: tiedAt.toISOString() };
+      for (let retry = 0; retry < 2; retry++) {
+        assert.deepEqual(await getReceipt(db, cashier, saved.orderId), expectedReceipt);
+        assert.deepEqual(await getReceipt(db, admin, saved.orderId), expectedReceipt);
+        const detail = await getHistoricalOrder(db, cashier, assisted.id);
+        assert.equal(detail.cashier.id, admin.id); assert.equal(detail.shift.cashier.id, cashier.id);
+        assert.equal(detail.status, "CANCELLED"); assert.equal(detail.shift.status, "CLOSED");
+        assert.equal((await getHistoricalOrder(db, other, foreign.id)).status, "UNPAID");
+        await assert.rejects(getHistoricalOrder(db, cashier, foreign.id), { code: "FORBIDDEN" });
+        await assert.rejects(getReceipt(db, other, saved.orderId), { code: "FORBIDDEN" });
+        await assert.rejects(getReceipt(db, cashier, assisted.id), { code: "ORDER_NOT_FOUND" });
+        await assert.rejects(getReceipt(db, other, foreign.id), { code: "ORDER_NOT_FOUND" });
+        const lookup = await listOrderHistory(db, cashier, { orderNumber: receipt.orderNumber });
+        assert.deepEqual(lookup.orders.map(o => o.id), [saved.orderId]);
+        assert.equal((await listOrderHistory(db, cashier, { orderNumber: foreign.orderNumber })).orders.length, 0);
+        const ids: string[] = [];
+        let cursor: { createdAt: string; id: string } | null = null;
+        do {
+          const page = await listOrderHistory(db, admin, { limit: 2, ...(cursor ? { cursor } : {}) });
+          ids.push(...page.orders.map(o => o.id)); cursor = page.nextCursor;
+        } while (cursor);
+        const expected = await db.order.findMany({ orderBy: [{ createdAt: "desc" }, { id: "desc" }], select: { id: true } });
+        assert.deepEqual(ids, expected.map(o => o.id));
+      }
+      assert.deepEqual(await unchanged(), start);
+      assert.equal((await db.shift.findUniqueOrThrow({ where: { id: anotherShift.id } })).status, "OPEN");
     });
   } finally {
     await db.$transaction(async tx => {

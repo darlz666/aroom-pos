@@ -11,6 +11,14 @@ test("authenticated order application boundary", async (t) => {
   process.env.SESSION_SECRET = randomBytes(32).toString("base64");
   process.env.DATABASE_URL ??= "postgresql://unused:unused@localhost:1/unused";
   const require = createRequire(import.meta.url);
+  // Plain Node does not apply Next's server-only module alias.
+  const serverOnlyPath = require.resolve("server-only");
+  const originalServerOnly = require.cache[serverOnlyPath];
+  require.cache[serverOnlyPath] = { exports: {} } as NodeModule;
+  t.after(() => {
+    if (originalServerOnly) require.cache[serverOnlyPath] = originalServerOnly;
+    else delete require.cache[serverOnlyPath];
+  });
   const navigationPath = require.resolve("next/navigation");
   const originalNavigation = require.cache[navigationPath];
   const serverNavigationPath = require.resolve("next/dist/client/components/navigation.react-server");
@@ -67,7 +75,8 @@ test("authenticated order application boundary", async (t) => {
   prisma.order.findUnique = (async () => { throw new Error("unexpected order lookup"); }) as unknown as typeof prisma.order.findUnique;
   prisma.$transaction = async () => { throw new Error("unexpected transaction"); };
   const { signSessionToken } = await import("../auth/session-token");
-  const { createOrderAction, editOrderAction, cancelOrderAction, getActiveUnpaidOrderAction, listActiveUnpaidOrdersAction } = await import("./actions");
+  const { createOrderAction, editOrderAction, cancelOrderAction, getActiveUnpaidOrderAction, listActiveUnpaidOrdersAction,
+    listOrderHistoryAction, getHistoricalOrderAction, getReceiptAction } = await import("./actions");
   const cases = [
     { action: createOrderAction, input: createInput, fallback: "CREATE_FAILED" },
     { action: editOrderAction, input: editInput, fallback: "UPDATE_FAILED" },
@@ -178,6 +187,70 @@ test("authenticated order application boundary", async (t) => {
         assert.equal(result.code, fallback);
         assert.equal(calls.length, before);
         authFailure = false;
+      }
+    });
+    await t.test("history and receipt actions authenticate fresh users and enforce real historical visibility", async () => {
+      const originalFindMany = prisma.order.findMany;
+      const previousFindUnique = prisma.order.findUnique;
+      const now = new Date("2026-09-17T00:00:00Z");
+      const stored = { ...dto, createdAt: now, paidAt: now, cancelledAt: null, status: "PAID",
+        cashier: { id: id, name: "Assisting Admin", passwordHash: "secret" },
+        shift: { id, cashierId: user.id, status: "CLOSED", openedAt: now, closedAt: now,
+          cashier: { id: user.id, name: "Shift owner", passwordHash: "secret" } },
+        items: [{ id, productId: id, productNameSnapshot: "Saved coffee", unitPriceSnapshot: 22000, quantity: 1, lineTotal: 22000, notes: null }],
+        payments: [{ id, method: "CASH", status: "SUCCEEDED", amount: 22000, cashReceived: 30000, changeAmount: 8000,
+          edcReference: null, succeededAt: now, createdAt: now, updatedAt: now, attemptIdentifier: "secret", requestFingerprint: "secret" }],
+        createRequestFingerprint: "secret" };
+      let reads = 0;
+      let dbFailure = false;
+      prisma.order.findMany = (async (args: { where: { shift: { cashierId?: string } } }) => {
+        reads++;
+        if (dbFailure) throw new Error("secret database");
+        return !args.where.shift.cashierId || args.where.shift.cashierId === stored.shift.cashierId ? [stored] : [];
+      }) as unknown as typeof prisma.order.findMany;
+      prisma.order.findUnique = (async () => { reads++; if (dbFailure) throw new Error("secret database"); return stored; }) as unknown as typeof prisma.order.findUnique;
+      const actions = [() => listOrderHistoryAction(), () => getHistoricalOrderAction(id), () => getReceiptAction(id)];
+      try {
+        const token = await signSessionToken({ userId: user.id });
+        for (const state of [{ cookie: undefined, active: true }, { cookie: "invalid", active: true }, { cookie: token, active: false }]) {
+          cookie = state.cookie; active = state.active;
+          for (const action of actions) await assert.rejects(action(), (error: unknown) => (error as { digest?: string }).digest === "NEXT_REDIRECT;replace;/login;307;");
+        }
+        assert.equal(reads, 0);
+        cookie = token; active = true;
+        for (const role of ["CASHIER", "ADMIN"] as const) {
+          user.role = role;
+          for (const action of actions) {
+            const result = await action(); assert.ok(result.success);
+            assert.doesNotMatch(JSON.stringify(result), /secret|Fingerprint|passwordHash|attemptIdentifier/);
+          }
+        }
+        stored.shift.cashierId = randomUUID(); user.role = "CASHIER";
+        const list = await listOrderHistoryAction(); assert.ok(list.success); assert.deepEqual(list.orders, []);
+        for (const action of actions.slice(1)) {
+          const result = await action(); assert.ok(!result.success); assert.equal(result.code, "FORBIDDEN");
+        }
+        user.role = "ADMIN"; // Same session, fresh role lookup grants historical Admin access.
+        for (const action of actions) assert.equal((await action()).success, true);
+        const before = reads;
+        for (const result of [await listOrderHistoryAction({ actorId: user.id }), await listOrderHistoryAction({ limit: 101 }),
+          await listOrderHistoryAction({ orderNumber: "bad" }), await getHistoricalOrderAction({ orderId: id }), await getReceiptAction({ orderId: id })]) {
+          assert.ok(!result.success); assert.equal(result.code, "INVALID_INPUT");
+        }
+        assert.equal(reads, before);
+        dbFailure = true;
+        for (const action of actions) {
+          const result = await action(); assert.ok(!result.success); assert.equal(result.code, "UPDATE_FAILED");
+          assert.doesNotMatch(JSON.stringify(result), /secret/);
+        }
+        dbFailure = false; authFailure = true;
+        const beforeAuthFailure = reads;
+        for (const action of actions) assert.equal((await action()).success, false);
+        assert.equal(reads, beforeAuthFailure);
+      } finally {
+        authFailure = false; active = true;
+        prisma.order.findMany = originalFindMany;
+        prisma.order.findUnique = previousFindUnique;
       }
     });
   } finally {

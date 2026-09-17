@@ -22,7 +22,7 @@ test("receipt read projection", async (t) => {
   const shift = { id: randomUUID(), cashierId: actor.id, status: "OPEN" };
   const paidAt = new Date("2026-09-16T02:01:00Z");
   const stored = {
-    shiftId: shift.id, status: "PAID", orderNumber: "AR-000042", orderType: "DINE_IN",
+    shift: { ...shift, status: "CLOSED" }, status: "PAID", orderNumber: "AR-000042", orderType: "DINE_IN",
     cashier: { name: "Original cashier", passwordHash: "secret" },
     createdAt: new Date("2026-09-16T02:00:00Z"), paidAt, total: 44000,
     items: [{ productNameSnapshot: "Original coffee", unitPriceSnapshot: 22000, quantity: 2, lineTotal: 44000,
@@ -31,11 +31,13 @@ test("receipt read projection", async (t) => {
       changeAmount: 6000, edcReference: null, succeededAt: paidAt, requestFingerprint: "secret" }],
   };
   function fixture(order: typeof stored | null = structuredClone(stored), active: typeof shift | null = shift) {
-    return { shift: { findFirst: async () => active }, order: {
+    return { shift: { findFirst: async () => { assert.fail(`Unexpected active shift lookup: ${JSON.stringify(active)}`); } }, order: {
       findUnique: async (args: Prisma.OrderFindUniqueArgs) => {
         assert.deepEqual(args.where, { id: orderId });
         assert.deepEqual((args.select!.payments as Prisma.Order$paymentsArgs).where, { status: "SUCCEEDED" });
         assert.equal(JSON.stringify(args.select).includes('"product"'), false);
+        assert.deepEqual(args.select!.shift, { select: { cashierId: true } });
+        assert.deepEqual((args.select!.items as Prisma.Order$itemsArgs).orderBy, [{ productId: "asc" }, { id: "asc" }]);
         // Model the successful-payment filter, including earlier unsuccessful attempts.
         return order && { ...order, payments: order.payments.filter((p) => p.status === "SUCCEEDED") };
       },
@@ -64,7 +66,7 @@ test("receipt read projection", async (t) => {
       { ...stored, status: "UNPAID" }, { ...stored, status: "CANCELLED" },
       { ...stored, payments: [] },
       { ...stored, payments: [{ ...stored.payments[0], status: "PENDING" }] },
-      { ...stored, shiftId: randomUUID() },
+      { ...stored, shift: { ...shift, cashierId: randomUUID() } },
     ]) {
       await assert.rejects(async () => createReceiptPrintJob(await getReceipt(fixture(order), actor, orderId), printer).print());
     }
@@ -79,14 +81,26 @@ test("receipt read projection", async (t) => {
     }
     await assert.rejects(getReceipt(fixture({ ...stored, payments: [] }), actor, orderId), { code: "ORDER_NOT_FOUND" });
   });
-  await t.test("wrong shift forbidden and active shift authorization required", async () => {
-    await assert.rejects(getReceipt(fixture({ ...stored, shiftId: randomUUID() }), actor, orderId), { code: "FORBIDDEN" });
+  await t.test("historical shift owner and Admin can read; another cashier cannot", async () => {
+    await assert.rejects(getReceipt(fixture({ ...stored, shift: { ...shift, cashierId: randomUUID() } }), actor, orderId), { code: "FORBIDDEN" });
     await assert.rejects(getReceipt(fixture(), { ...actor, id: randomUUID() }, orderId), { code: "FORBIDDEN" });
-    await assert.rejects(getReceipt(fixture(stored, null), actor, orderId), { code: "NO_ACTIVE_SHIFT" });
-    await assert.rejects(getReceipt(fixture(stored, { ...shift, status: "CLOSED" }), actor, orderId), { code: "NO_ACTIVE_SHIFT" });
     const admin = { id: randomUUID(), role: "ADMIN" as const };
     assert.equal((await getReceipt(fixture(), admin, orderId)).cashier, "Original cashier");
-    await assert.rejects(getReceipt(fixture({ ...stored, shiftId: randomUUID() }), admin, orderId), { code: "FORBIDDEN" });
+    assert.equal((await getReceipt(fixture({ ...stored, shift: { ...shift, cashierId: randomUUID(), status: "CLOSED" } }), admin, orderId)).total, 44000);
+    assert.equal((await getReceipt(fixture({ ...stored, cashier: { name: "Assisting Admin", passwordHash: "secret" } }), actor, orderId)).cashier, "Assisting Admin");
+    for (const reader of [{ ...actor, id: "" }, { ...actor, role: "INVALID" as "CASHIER" }]) {
+      await assert.rejects(getReceipt(fixture(), reader, orderId), { code: "FORBIDDEN" });
+    }
+  });
+  await t.test("receipt reads after closure ignore register state and never mutate historical data", async () => {
+    for (const active of [null, shift, { ...shift, id: randomUUID(), cashierId: randomUUID() }]) {
+      const order = structuredClone(stored);
+      const before = structuredClone(order);
+      const db = fixture(order, active);
+      const receipt = await getReceipt(db, actor, orderId);
+      assert.deepEqual(await getReceipt(db, actor, orderId), receipt);
+      assert.deepEqual(order, before);
+    }
   });
   await t.test("snapshots survive menu changes and failed payment attempts", async () => {
     const order = structuredClone(stored);
@@ -100,7 +114,7 @@ test("receipt read projection", async (t) => {
     for (const id of ["", "bad", null, { orderId }]) {
       await assert.rejects(getReceipt({} as PrismaClient, actor, id as string), { code: "INVALID_INPUT" });
     }
-    const db = { shift: { findFirst: async () => { throw new Error("secret connection details"); } } } as unknown as PrismaClient;
+    const db = { order: { findUnique: async () => { throw new Error("secret connection details"); } } } as unknown as PrismaClient;
     await assert.rejects(getReceipt(db, actor, orderId), { code: "UPDATE_FAILED", message: "UPDATE_FAILED" });
   });
 });

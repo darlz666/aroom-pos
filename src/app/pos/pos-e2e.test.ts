@@ -140,6 +140,7 @@ function createPosDatabase(actor: { id: string; name: string }, product: StoredP
           return {
             ...order,
             cashier: { name: actor.name },
+            shift: shifts.find((shift) => shift.id === order.shiftId),
             payments: payments.filter((payment) => payment.orderId === order.id && payment.status === "SUCCEEDED"),
           };
         }
@@ -391,4 +392,8 @@ test("POS lifecycle: open, create, edit, pay, receipt, settle, close", async (t)
     "PAYMENT_SUCCEEDED",
     "SHIFT_CLOSED",
   ]);
+  const closedState = structuredClone({ orders: state.orders, payments: state.payments, shifts: state.shifts, audit: state.auditActions });
+  assert.deepEqual(await getReceipt(state.db, actor, created.id), receipt);
+  assert.deepEqual(await getReceipt(state.db, actor, created.id), receipt);
+  assert.deepEqual({ orders: state.orders, payments: state.payments, shifts: state.shifts, audit: state.auditActions }, closedState);
 });

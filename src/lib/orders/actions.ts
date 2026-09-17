@@ -5,6 +5,7 @@ import { requireUser } from "../auth/authorization";
 import { prisma } from "../db";
 import { OrderError, type OrderErrorCode } from "./domain";
 import { getReceipt } from "./receipt";
+import { getHistoricalOrder, listOrderHistory } from "./history";
 import { cancelOrder, createOrder, editOrder, getActiveUnpaidOrder, listActiveUnpaidOrders, type EditOrderResult } from "./service";
 export type { SafeOrder } from "./service";
 
@@ -102,6 +103,24 @@ export async function getReceiptAction(orderId: unknown) {
     const actor = await requireUser();
     if (typeof orderId !== "string") throw new OrderError("INVALID_INPUT");
     return { success: true, receipt: await getReceipt(prisma, actor, orderId) } as const;
+  } catch (error) {
+    return safeFailure(error, "UPDATE_FAILED");
+  }
+}
+
+export async function listOrderHistoryAction(input: unknown = {}) {
+  try {
+    const actor = await requireUser();
+    return { success: true, ...await listOrderHistory(prisma, actor, input) } as const;
+  } catch (error) {
+    return safeFailure(error, "UPDATE_FAILED");
+  }
+}
+
+export async function getHistoricalOrderAction(orderId: unknown) {
+  try {
+    const actor = await requireUser();
+    return { success: true, order: await getHistoricalOrder(prisma, actor, orderId) } as const;
   } catch (error) {
     return safeFailure(error, "UPDATE_FAILED");
   }
