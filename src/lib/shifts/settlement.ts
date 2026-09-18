@@ -6,7 +6,7 @@ function successfulShiftPayments(shiftId: string) {
   return { status: "SUCCEEDED", order: { shiftId, status: "PAID" } } as const;
 }
 
-/** Caller must hold the Shift lock; read on that transaction before persisting closure. */
+/** When persisting closure, caller must hold the Shift lock and use its transaction. */
 export async function getShiftCashSettlement(
   tx: Prisma.TransactionClient,
   shift: { id: string; openingCash: number },
