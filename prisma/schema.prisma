@@ -44,20 +44,38 @@ enum PaymentStatus {
   CANCELLED
 }
 
+// Symbols intentionally retain their standard spelling. Persisted inventory
+// quantities use g, ml or pcs; kg and L are accepted conversion inputs.
+enum InventoryUnit {
+  g
+  kg
+  ml
+  L
+  pcs
+}
+
+enum StockMovementType {
+  PURCHASE
+  SALE_CONSUMPTION
+  ADJUSTMENT_IN
+  ADJUSTMENT_OUT
+}
+
 // All money fields store integer Indonesian rupiah.
 // Timestamps store instants; business dates must use Asia/Jakarta.
 model User {
-  id              String     @id @default(uuid()) @db.Uuid
+  id              String          @id @default(uuid()) @db.Uuid
   name            String
-  loginIdentifier String     @unique
+  loginIdentifier String          @unique
   passwordHash    String
   role            UserRole
-  active          Boolean    @default(true)
-  createdAt       DateTime   @default(now()) @db.Timestamptz(3)
-  updatedAt       DateTime   @updatedAt @db.Timestamptz(3)
+  active          Boolean         @default(true)
+  createdAt       DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime        @updatedAt @db.Timestamptz(3)
   shifts          Shift[]
   orders          Order[]
   auditLogs       AuditLog[]
+  stockMovements  StockMovement[]
 }
 
 model Category {
@@ -79,6 +97,7 @@ model Product {
   updatedAt  DateTime    @updatedAt @db.Timestamptz(3)
   category   Category    @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   orderItems OrderItem[]
+  recipe     Recipe?
 
   @@index([categoryId])
 }
@@ -197,4 +216,79 @@ model AuditLog {
 
   @@index([actorId])
   @@index([entityType, entityId, createdAt])
+}
+
+model Ingredient {
+  id           String          @id @default(uuid()) @db.Uuid
+  // SQL unique index on lower(btrim(name)) prevents duplicate physical items.
+  name         String
+  baseUnit     InventoryUnit
+  currentStock Decimal         @default(0) @db.Decimal(18, 3)
+  minimumStock Decimal         @default(0) @db.Decimal(18, 3)
+  active       Boolean         @default(true)
+  // Optional integer rupiah per ONE canonical base unit. Null means unknown.
+  // No HPP or costing calculations yet.
+  unitCost     Int?
+  createdAt    DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime        @updatedAt @db.Timestamptz(3)
+  recipeItems  RecipeItem[]
+  movements    StockMovement[]
+
+  // Composite foreign keys enforce canonical units in recipes and history.
+  @@unique([id, baseUnit])
+}
+
+model Supplier {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  contact   String?
+  phone     String?
+  address   String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+}
+
+model Recipe {
+  id        String       @id @default(uuid()) @db.Uuid
+  productId String       @unique @db.Uuid
+  createdAt DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime     @updatedAt @db.Timestamptz(3)
+  product   Product      @relation(fields: [productId], references: [id], onDelete: Restrict)
+  items     RecipeItem[]
+}
+
+model RecipeItem {
+  id           String        @id @default(uuid()) @db.Uuid
+  recipeId     String        @db.Uuid
+  ingredientId String        @db.Uuid
+  quantity     Decimal       @db.Decimal(18, 3)
+  unit         InventoryUnit
+  recipe       Recipe        @relation(fields: [recipeId], references: [id], onDelete: Restrict)
+  ingredient   Ingredient    @relation(fields: [ingredientId, unit], references: [id, baseUnit], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([recipeId, ingredientId])
+  @@index([ingredientId, unit])
+}
+
+// Append-only SQL protection: corrections will be new movements, never edits.
+// No application writer exists in this milestone.
+model StockMovement {
+  id           String            @id @default(uuid()) @db.Uuid
+  ingredientId String            @db.Uuid
+  type         StockMovementType
+  // Positive magnitude; the movement type determines direction.
+  quantity     Decimal           @db.Decimal(18, 3)
+  unit         InventoryUnit
+  stockAfter   Decimal           @db.Decimal(18, 3)
+  sourceType   String?
+  sourceId     String?           @db.Uuid
+  actorId      String?           @db.Uuid
+  createdAt    DateTime          @default(now()) @db.Timestamptz(3)
+  ingredient   Ingredient        @relation(fields: [ingredientId, unit], references: [id, baseUnit], onDelete: Restrict, onUpdate: Restrict)
+  actor        User?             @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([ingredientId, createdAt])
+  @@index([sourceType, sourceId])
+  @@index([actorId])
 }

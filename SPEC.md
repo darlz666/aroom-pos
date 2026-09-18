@@ -129,6 +129,10 @@ The following are NOT part of MVP:
 
 Do not implement deferred scope unless explicitly approved later.
 
+Milestone 7B explicitly approves only the Stock Management domain/database
+foundation described in section 20. Inventory and supplier workflows remain
+deferred; the existing role permissions and operational behavior are unchanged.
+
 ## 5. Roles and Permissions
 
 ### Admin
@@ -597,6 +601,11 @@ Do not create a separate report table unless later required.
 
 ### Milestone 7 — Cash payment
 
+### Milestone 7B — Stock Management Foundation
+
+- Ingredient, supplier, product recipe relations, units, and immutable movement schema.
+- Domain validation and optional ingredient unit cost only; see section 20.
+
 ### Milestone 8 — Manual BCA EDC payment
 
 ### Milestone 9 — Midtrans QRIS sandbox
@@ -610,3 +619,35 @@ Do not create a separate report table unless later required.
 ### Milestone 13 — Production readiness and supervised pilot
 
 Each milestone should be completed and tested before expanding scope. Production readiness includes financial retry/recovery checks, permission enforcement, backup restoration, actual Android/printer validation, and a supervised trading shift with reconciled totals.
+
+## 20. Stock Management Foundation (Milestone 7B)
+
+- One Ingredient represents one shared physical inventory item. Its currentStock
+  is the sole inventory balance; recipes and products never own allocated stock.
+- Ingredient stores name, canonical baseUnit, currentStock, minimumStock, active,
+  timestamps, and an optional nonnegative integer-rupiah unitCost per one base
+  unit. Null cost means unknown. No cost calculations are included.
+- Accept g, kg, ml, L, and pcs. Canonical stored units are g, ml, and pcs; convert
+  1 kg to 1000 g and 1 L to 1000 ml. Units cannot change after ingredient creation.
+  Quantities use exact decimals with up to three decimal places and fifteen
+  integer digits. Reject invalid precision, overflow, negatives, and incompatible
+  units rather than rounding or clamping. No packaging or density conversions.
+- Ingredient names are required, trimmed, and unique ignoring case and surrounding
+  spaces, including inactive ingredients. Metadata input cannot set currentStock;
+  new balances default to zero. Future stock services must calculate changes on
+  the server.
+- Supplier stores required name, optional contact/phone/address, active, and
+  timestamps. No purchasing workflow or supplier-to-ingredient allocation exists.
+- The existing Product has at most one Recipe. RecipeItem references Recipe and
+  Ingredient, has positive quantity in the ingredient's canonical unit, and is
+  unique per recipe/ingredient pair. Validate references against database rows.
+  Many recipes may use the same ingredient. Recipes never affect selling prices,
+  POS availability, order snapshots, or balances in this milestone.
+- StockMovement supports PURCHASE, SALE_CONSUMPTION, ADJUSTMENT_IN, and
+  ADJUSTMENT_OUT, with positive quantity, canonical unit, nonnegative stockAfter,
+  optional source type/id pair, optional User actor, and creation timestamp.
+  Movement records cannot be updated or deleted. No movement-writing workflow
+  exists yet; future services must atomically record movements and balances.
+- No inventory pages, actions, permission grants, Stock In, Recipe UI, HPP,
+  weighted-average/FIFO/LIFO costing, POS stock consumption, or Finance changes.
+  STOCK_MANAGEMENT and FINANCE retain their restricted landing and logout.
