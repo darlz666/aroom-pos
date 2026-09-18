@@ -1,6 +1,6 @@
 "use server";
 
-import { requireUser } from "../auth/authorization";
+import { requireOperator } from "../auth/authorization";
 import { prisma } from "../db";
 import { parseShiftMoney, ShiftError } from "./domain";
 import { closeShift } from "./service";
@@ -17,7 +17,7 @@ const messages = {
 };
 
 export async function closeShiftAction(input: { shiftId: string; countedCash: string; discrepancyNote: string; adminCloseReason: string }) {
-  const actor = await requireUser();
+  const actor = await requireOperator();
   try {
     const result = await closeShift(prisma, actor, {
       shiftId: input.shiftId,

@@ -43,7 +43,7 @@ test("server boundary authenticates, authorizes owner/admin, serializes dates an
   let reads = 0;
   let fails = false;
   const { getShiftSettlementAction: action } = load("../../lib/shifts/settlement-action.ts", {
-    "../auth/authorization": { requireUser: async () => { if (!authenticated) throw new Error("login"); return actor; } },
+    "../auth/authorization": { requireOperator: async () => { if (!authenticated) throw new Error("login"); return actor; } },
     "../db": { prisma: { shift: { findUnique: async () => owner } } },
     "./settlement": { getShiftSettlement: async () => {
       reads++;

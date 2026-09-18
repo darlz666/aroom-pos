@@ -1,7 +1,7 @@
 "use server";
 
 import { unstable_rethrow } from "next/navigation";
-import { requireUser } from "../auth/authorization";
+import { requireOperator } from "../auth/authorization";
 import { prisma } from "../db";
 import { OrderError, type OrderErrorCode } from "./domain";
 import { getReceipt } from "./receipt";
@@ -50,7 +50,7 @@ function orderDto(order: EditOrderResult) {
 
 export async function createOrderAction(input: unknown) {
   try {
-    const actor = await requireUser();
+    const actor = await requireOperator();
     // Services own strict input validation; do not strip unexpected request fields.
     const order = await createOrder(prisma, actor, input);
     return { success: true, order: { ...orderDto(order), replayed: order.replayed } } as const;
@@ -61,7 +61,7 @@ export async function createOrderAction(input: unknown) {
 
 export async function editOrderAction(input: unknown) {
   try {
-    const actor = await requireUser();
+    const actor = await requireOperator();
     const order = await editOrder(prisma, actor, input);
     return { success: true, order: orderDto(order) } as const;
   } catch (error) {
@@ -71,7 +71,7 @@ export async function editOrderAction(input: unknown) {
 
 export async function cancelOrderAction(input: unknown) {
   try {
-    const actor = await requireUser();
+    const actor = await requireOperator();
     const order = await cancelOrder(prisma, actor, input);
     return { success: true, order: orderDto(order) } as const;
   } catch (error) {
@@ -81,7 +81,7 @@ export async function cancelOrderAction(input: unknown) {
 
 export async function listActiveUnpaidOrdersAction() {
   try {
-    const actor = await requireUser();
+    const actor = await requireOperator();
     return { success: true, orders: (await listActiveUnpaidOrders(prisma, actor)).map(orderDto) } as const;
   } catch (error) {
     return safeFailure(error, "UPDATE_FAILED");
@@ -90,7 +90,7 @@ export async function listActiveUnpaidOrdersAction() {
 
 export async function getActiveUnpaidOrderAction(orderId: unknown) {
   try {
-    const actor = await requireUser();
+    const actor = await requireOperator();
     if (typeof orderId !== "string") throw new OrderError("INVALID_INPUT");
     return { success: true, order: orderDto(await getActiveUnpaidOrder(prisma, actor, orderId)) } as const;
   } catch (error) {
@@ -100,7 +100,7 @@ export async function getActiveUnpaidOrderAction(orderId: unknown) {
 
 export async function getReceiptAction(orderId: unknown) {
   try {
-    const actor = await requireUser();
+    const actor = await requireOperator();
     if (typeof orderId !== "string") throw new OrderError("INVALID_INPUT");
     return { success: true, receipt: await getReceipt(prisma, actor, orderId) } as const;
   } catch (error) {
@@ -110,7 +110,7 @@ export async function getReceiptAction(orderId: unknown) {
 
 export async function listOrderHistoryAction(input: unknown = {}) {
   try {
-    const actor = await requireUser();
+    const actor = await requireOperator();
     return { success: true, ...await listOrderHistory(prisma, actor, input) } as const;
   } catch (error) {
     return safeFailure(error, "UPDATE_FAILED");
@@ -119,7 +119,7 @@ export async function listOrderHistoryAction(input: unknown = {}) {
 
 export async function getHistoricalOrderAction(orderId: unknown) {
   try {
-    const actor = await requireUser();
+    const actor = await requireOperator();
     return { success: true, order: await getHistoricalOrder(prisma, actor, orderId) } as const;
   } catch (error) {
     return safeFailure(error, "UPDATE_FAILED");

@@ -139,7 +139,7 @@ test("action uses authenticated actor, whitelists input/result, and safely maps 
   let calls = 0;
   const actor = { id: "trusted", role: "CASHIER" };
   const action = load("../lib/shifts/close-action.ts", {
-    "../auth/authorization": { requireUser: async () => { if (!authenticated) throw new Error("login"); return actor; } },
+    "../auth/authorization": { requireOperator: async () => { if (!authenticated) throw new Error("login"); return actor; } },
     "../db": { prisma: {} },
     "./domain": { ShiftError, parseShiftMoney },
     "./service": { closeShift: async (_db: unknown, receivedActor: unknown, input: Record<string, unknown>) => {

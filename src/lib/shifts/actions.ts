@@ -1,6 +1,6 @@
 "use server";
 
-import { requireUser } from "../auth/authorization";
+import { requireOperator } from "../auth/authorization";
 import { prisma } from "../db";
 import { ShiftError } from "./domain";
 import { getActiveRegisterState, openShift } from "./service";
@@ -15,7 +15,7 @@ function safeFailure(error: unknown) {
 }
 
 export async function openShiftAction(openingCash: unknown) {
-  const actor = await requireUser();
+  const actor = await requireOperator();
   try {
     const { state, shift } = await openShift(prisma, actor, openingCash);
     return { success: true, state, shift: {
@@ -27,7 +27,7 @@ export async function openShiftAction(openingCash: unknown) {
 }
 
 export async function getActiveShiftAction() {
-  const actor = await requireUser();
+  const actor = await requireOperator();
   try {
     return { success: true, ...await getActiveRegisterState(prisma, actor) } as const;
   } catch (error) {

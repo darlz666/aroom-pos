@@ -8,13 +8,22 @@ import { CloseShiftForm } from "./close-shift-form";
 
 export default async function Home() {
   const user = await requireUser();
-  const register = await getActiveShiftAction();
 
   async function logout() {
     "use server";
     await logoutAction();
     redirect("/login");
   }
+
+  if (user.role === "STOCK_MANAGEMENT" || user.role === "FINANCE") {
+    return <main lang="id" className="flex flex-1 flex-col items-center justify-center gap-6 bg-[#f6f4ef] p-8 text-center text-[#292e28]">
+      <h1 className="text-3xl font-semibold">{user.role === "FINANCE" ? "Finance" : "Stock Management"}</h1>
+      <p className="text-lg">{user.name}</p>
+      <p>Akun Anda aktif. Modul ini belum tersedia.</p>
+      <form action={logout}><button type="submit" className="min-h-14 rounded-lg border border-[#a8aea0] px-6 py-3 font-semibold">Logout</button></form>
+    </main>;
+  }
+  const register = await getActiveShiftAction();
 
   return (
     <main lang="id" className="flex flex-1 flex-col bg-[#f6f4ef] px-6 py-6 text-[#292e28] sm:px-10">
@@ -24,6 +33,7 @@ export default async function Home() {
           <p className="mt-1 text-xs tracking-[0.25em] text-[#62685c]">COFFEE BAR</p>
         </div>
         <div className="flex flex-wrap items-center gap-6">
+          {user.role === "ADMIN" && <Link href="/admin" className="inline-flex min-h-14 items-center rounded-lg border border-[#a8aea0] px-6 py-3 font-semibold">Admin</Link>}
           <Link href="/orders" className="inline-flex min-h-14 items-center rounded-lg border border-[#a8aea0] px-6 py-3 font-semibold hover:bg-[#e9eade] focus-visible:outline-2 focus-visible:outline-offset-4">Riwayat pesanan</Link>
           <div><p className="text-lg font-semibold break-words">{user.name}</p><p className="text-sm text-[#62685c]">{user.role}</p></div>
           <form action={logout}>

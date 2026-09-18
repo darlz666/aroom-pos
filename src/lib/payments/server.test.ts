@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { test } from "node:test";
 
-test("server boundary obtains a fresh requireUser actor before every payment call", async () => {
+test("server boundary obtains a fresh requireOperator actor before every payment call", async () => {
   const require = createRequire(import.meta.url);
   const paths = [require.resolve("../auth/authorization"), require.resolve("../db"), require.resolve("./service")];
   const originals = paths.map(path => require.cache[path]);
@@ -11,7 +11,7 @@ test("server boundary obtains a fresh requireUser actor before every payment cal
   let denied = false;
   const db = {};
   const exports = [
-    { requireUser: async () => { events.push("auth"); if (denied) throw new Error("unauthenticated"); return { ...actor }; } },
+    { requireOperator: async () => { events.push("auth"); if (denied) throw new Error("unauthenticated"); return { ...actor }; } },
     { prisma: db },
     { recordManualPayment: async (client: unknown, authenticated: unknown, input: unknown) => {
       events.push("payment"); assert.equal(client, db); assert.deepEqual(authenticated, actor); return input;

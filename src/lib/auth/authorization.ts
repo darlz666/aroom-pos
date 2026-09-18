@@ -17,3 +17,9 @@ export async function requireRole(role: AuthenticatedUser["role"]): Promise<Auth
   if (user.role !== role) redirect("/");
   return user;
 }
+
+export async function requireOperator(): Promise<AuthenticatedUser> {
+  const user = await requireUser();
+  if (user.role !== "ADMIN" && user.role !== "CASHIER") redirect("/");
+  return user;
+}

@@ -43,7 +43,7 @@ test("POS authenticates before reads and gates the cart using server shift state
   const categories = [{ id: "c", name: "Coffee", products: [] }];
   const page = load("./page.tsx", {
     "next/link": { default: "a" },
-    "@/lib/auth/authorization": { requireUser: async () => {
+    "@/lib/auth/authorization": { requireOperator: async () => {
       if (!authenticated) throw new Error("redirect login");
       return { name: "Operator", passwordHash: "secret-hash" };
     } },

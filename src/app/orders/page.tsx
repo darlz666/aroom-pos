@@ -1,10 +1,10 @@
 import Link from "next/link";
-import { requireUser } from "@/lib/auth/authorization";
+import { requireOperator } from "@/lib/auth/authorization";
 import { listOrderHistoryAction } from "@/lib/orders/actions";
 import { OrderHistory } from "./order-history";
 
 export default async function OrderHistoryPage() {
-  await requireUser();
+  await requireOperator();
   const initial = await listOrderHistoryAction();
   return <main lang="id" className="flex flex-1 flex-col bg-[#f6f4ef] text-[#292e28] lg:h-dvh lg:flex-none">
     <header className="flex shrink-0 flex-wrap items-center justify-between gap-4 border-b border-[#dedfd5] px-6 py-4">

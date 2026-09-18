@@ -123,8 +123,14 @@ Roles:
 
 - Admin
 - Cashier
+- Stock Management (restricted landing only)
+- Finance (restricted landing only)
 
 Enforce permissions on the server, not only in the UI.
+
+Access Management at `/admin/users` is active-ADMIN-only. Preserve self-access and at least one active ADMIN under concurrent mutations. Audit actual changes transactionally without credentials. Never expose password hashes. Reload role and active status from the database for each protected request.
+
+Only ADMIN and CASHIER may use operational pages/actions. STOCK_MANAGEMENT and FINANCE currently receive a placeholder landing and logout; these roles do not grant inventory, reports, or finance functionality. Reports remain ADMIN-only. Follow SPEC.md section 5 for the full Access Management scope.
 
 ## Database
 

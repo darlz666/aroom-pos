@@ -34,6 +34,8 @@ This document is the single source of truth for product behavior and MVP scope.
 - Logout
 - Admin role
 - Cashier role
+- Stock Management role (restricted landing only)
+- Finance role (restricted landing only)
 
 ### Cashier Shift
 
@@ -157,11 +159,23 @@ Can:
 
 Cashier cannot manage users or perform sensitive administrative configuration. Enforce permissions on the server.
 
+### Access Management
+
+- Only an active ADMIN can access `/admin/users`, list users, create users, change roles, or activate/deactivate accounts.
+- Supported roles: ADMIN, CASHIER, STOCK_MANAGEMENT, FINANCE. New accounts are active; login identifiers are trimmed, lowercased, and unique. Passwords use the existing Argon2id hashing and 12–128 character policy.
+- List only id, name, login identifier, role, and active status. Never expose password hashes or session data.
+- An admin cannot deactivate their own account or change their own role away from ADMIN. At least one active ADMIN must remain; concurrent access changes must preserve these rules.
+- Record user creation and actual role/status changes in AuditLog, in the same transaction as the change, without passwords or hashes. Repeating an already-applied role/status change is a no-op.
+- Reload the active user and role from the database for every protected request; deactivation and role changes apply to existing sessions on their next request.
+- `/` keeps the register workflow for ADMIN and CASHIER. STOCK_MANAGEMENT and FINANCE see a role-specific “module not available” landing with logout, without shift, POS, orders, receipts, reports, or user-management access. These roles do not introduce inventory or finance features.
+- Protect operational pages and server actions independently. Reports and administration remain ADMIN-only. ADMIN navigation links the register, administration, Access Management, and existing daily reports.
+- Disable duplicate UI submissions. On an uncertain write or lost connection, reload the user list before allowing another mutation. No user deletion or password reset is included in this scope.
+
 ## 6. Pages / Screens
 
 | Screen | Purpose |
 | --- | --- |
-| Login | Authenticate an active Admin or Cashier. |
+| Login | Authenticate an active user in any supported role. |
 | Shift Opening | Enter opening cash balance and open the register's shift. |
 | POS | Browse products and manage the cart and order type. |
 | Payment | Select method and complete cash, manual BCA EDC, or QRIS payment. |
@@ -170,7 +184,8 @@ Cashier cannot manage users or perform sensitive administrative configuration. E
 | Shift Closing | Count cash, review expected cash and variance, and close shift. |
 | Daily Report | View daily sales, payment-method totals, and shift reconciliation. |
 | Menu Management | Manage categories, products, prices, and availability. |
-| User Management | Perform basic user management and assign Admin or Cashier role. |
+| User Management | ADMIN-only Access Management at `/admin/users`: list, create, assign roles, activate/deactivate. |
+| Restricted Role Landing | STOCK_MANAGEMENT and FINANCE module placeholder and logout. |
 
 Payment and receipt screens may be dialogs or panels within the POS if that improves the cashier workflow.
 

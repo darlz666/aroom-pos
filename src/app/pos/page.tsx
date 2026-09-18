@@ -1,12 +1,12 @@
 import Link from "next/link";
-import { requireUser } from "@/lib/auth/authorization";
+import { requireOperator } from "@/lib/auth/authorization";
 import { getActiveShiftAction } from "@/lib/shifts/actions";
 import { prisma } from "@/lib/db";
 import { PosMenu, type MenuCategory } from "./pos-menu";
 import { SettlementPanel } from "./settlement-panel";
 
 export default async function PosPage() {
-  const user = await requireUser();
+  const user = await requireOperator();
   const register = await getActiveShiftAction();
   const canOperate = register.success && (register.state === "OWNED" || register.state === "ADMIN_VIEW");
   let categories: MenuCategory[] | null = null;

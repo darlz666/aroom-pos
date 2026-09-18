@@ -146,7 +146,7 @@ test("history route authenticates before history reads and does not require an o
   const initial = history();
   const page = load("./page.tsx", {
     "next/link": { default: "a" }, "./order-history": { OrderHistory: "History" },
-    "@/lib/auth/authorization": { requireUser: async () => { if (!authenticated) throw new Error("redirect login"); } },
+    "@/lib/auth/authorization": { requireOperator: async () => { if (!authenticated) throw new Error("redirect login"); } },
     "@/lib/orders/actions": { listOrderHistoryAction: async () => { reads++; return initial; } },
   });
   await assert.rejects(async () => page.default(undefined as never), /redirect login/);

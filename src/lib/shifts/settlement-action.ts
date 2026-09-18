@@ -1,11 +1,11 @@
 "use server";
 
-import { requireUser } from "../auth/authorization";
+import { requireOperator } from "../auth/authorization";
 import { prisma } from "../db";
 import { getShiftSettlement } from "./settlement";
 
 export async function getShiftSettlementAction(shiftId: string) {
-  const actor = await requireUser();
+  const actor = await requireOperator();
   try {
     if (typeof shiftId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(shiftId)) throw new Error("Invalid shift");
     if (actor.role !== "ADMIN" && actor.role !== "CASHIER") throw new Error("Forbidden");

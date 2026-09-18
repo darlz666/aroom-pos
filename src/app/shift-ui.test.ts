@@ -53,12 +53,22 @@ test("root authenticates first and renders only permitted state and staff fields
   await assert.rejects(async () => page.default(), /redirect login/);
   assert.equal(reads, 0);
   authenticated = true;
+  for (role of ["STOCK_MANAGEMENT", "FINANCE"]) {
+    const landing = await page.default();
+    assert.equal(reads, 0);
+    assert.match(text(landing), /Modul ini belum tersedia/);
+    assert.match(text(landing), /Logout/);
+    assert.equal(elements(landing).some(e => e.props.href), false);
+    assert.ok(!elements(landing).some(e => e.type === OpenShiftForm || e.type === CloseShiftForm));
+    assert.doesNotMatch(JSON.stringify(landing), /private-/);
+  }
   for (role of ["CASHIER", "ADMIN"]) {
     const empty = await page.default();
     assert.ok(elements(empty).some(e => e.type === OpenShiftForm && Object.keys(e.props).length === 0));
     assert.ok(!elements(empty).some(e => e.type === CloseShiftForm));
     assert.match(text(empty), /Buka shift terlebih dahulu/);
     assert.doesNotMatch(JSON.stringify(empty), /private-/);
+    assert.equal(elements(empty).some(e => e.props.href === "/admin"), role === "ADMIN");
   }
   for (const mode of ["OWNED", "OCCUPIED", "ADMIN_VIEW", "ADMIN_OWNED"]) {
     role = mode.startsWith("ADMIN") ? "ADMIN" : "CASHIER";
@@ -176,7 +186,7 @@ test("UI has no order/payment action or sensitive client props and retains secur
   const page = source("./page.tsx");
   const form = source("./open-shift-form.tsx");
   assert.doesNotMatch(page, /use client/);
-  assert.match(page, /await requireUser\(\);\s*const register = await getActiveShiftAction\(\)/);
+  assert.match(page, /await requireUser\(\);[\s\S]*const register = await getActiveShiftAction\(\)/);
   assert.match(page, /await logoutAction\(\);\s*redirect\("\/login"\)/);
   assert.doesNotMatch(page + form, /createOrder|paymentAction|passwordHash|sessionToken|dangerouslySetInnerHTML/);
   assert.match(form, /import \{ openShiftAction \} from "@\/lib\/shifts\/actions"/);
