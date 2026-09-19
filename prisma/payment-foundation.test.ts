@@ -24,6 +24,7 @@ test("payment PostgreSQL authority, atomicity, retries, constraints and existing
   assert.notEqual(process.env.NODE_ENV, "production");
   assert.ok(process.env.DATABASE_URL);
   assert.ok(["localhost", "127.0.0.1", "[::1]"].includes(new URL(process.env.DATABASE_URL).hostname));
+  assert.match(new URL(process.env.DATABASE_URL).pathname, /^\/aroom_(payment|access)_test_/, "Immutable fixture cleanup requires a disposable test database");
   const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
   const cashier = { id: randomUUID(), role: "CASHIER" as const };
   const admin = { id: randomUUID(), role: "ADMIN" as const };
@@ -37,6 +38,8 @@ test("payment PostgreSQL authority, atomicity, retries, constraints and existing
     for (const actor of [cashier, admin, other]) await db.user.create({ data: { ...actor, name: "Payment fixture", loginIdentifier: randomUUID(), passwordHash: "unused" } });
     await db.category.create({ data: { id: categoryId, name: "Payment fixture" } });
     const product = await db.product.create({ data: { categoryId, name: "Coffee", price: 22000 } });
+    const ingredient = await db.ingredient.create({ data: { name: randomUUID(), baseUnit: "g", currentStock: "1000" } });
+    await db.recipe.create({ data: { productId: product.id, items: { create: { ingredientId: ingredient.id, quantity: "1", unit: "g" } } } });
     const shift = await db.shift.create({ data: { cashierId: cashier.id, openingCash: 0 } });
     const create = () => createOrder(db, cashier, { createIdempotencyKey: randomUUID(), orderType: "DINE_IN", items: [{ productId: product.id, quantity: 1 }] });
     const request = (order: { id: string; revision: number }) => ({ orderId: order.id, expectedRevision: order.revision, attemptIdentifier: randomUUID(), method: "CASH", cashReceived: 30000 });
@@ -168,11 +171,17 @@ test("payment PostgreSQL authority, atomicity, retries, constraints and existing
     });
   } finally {
     await db.$transaction(async tx => {
+      // Only this disposable test DB permits cleanup of immutable sale evidence.
+      await tx.$executeRawUnsafe('ALTER TABLE "StockMovement" DISABLE TRIGGER "StockMovement_immutable"');
+      await tx.stockMovement.deleteMany({ where: { actorId: { in: ids } } });
+      await tx.$executeRawUnsafe('ALTER TABLE "StockMovement" ENABLE TRIGGER "StockMovement_immutable"');
       await tx.auditLog.deleteMany({ where: { actorId: { in: ids } } });
       await tx.payment.deleteMany({ where: { order: { cashierId: { in: ids } } } });
       await tx.orderItem.deleteMany({ where: { order: { cashierId: { in: ids } } } });
       await tx.order.deleteMany({ where: { cashierId: { in: ids } } });
       await tx.shift.deleteMany({ where: { cashierId: { in: ids } } });
+      await tx.recipeItem.deleteMany({ where: { recipe: { product: { categoryId } } } });
+      await tx.recipe.deleteMany({ where: { product: { categoryId } } });
       await tx.product.deleteMany({ where: { categoryId } });
       await tx.category.deleteMany({ where: { id: categoryId } });
       await tx.user.deleteMany({ where: { id: { in: ids } } });

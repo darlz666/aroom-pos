@@ -2,6 +2,8 @@ import "server-only";
 import { Prisma, type PrismaClient, type Payment } from "../../generated/prisma/client";
 import { assertCanOpenShift, assertCanOperateShift, ShiftError, type ShiftActor } from "../shifts/domain";
 import { lockShift } from "../shifts/service";
+import { consumePaidOrderStock } from "../inventory/sale-service";
+import { SaleStockError } from "../inventory/sale-domain";
 import { assertPayable, authoritativeAmount, normalizePaymentRequest, paymentDetails, PaymentError, paymentFingerprint } from "./domain";
 
 function result(payment: Payment, replayed: boolean) {
@@ -48,6 +50,7 @@ export async function recordManualPayment(db: PrismaClient, actor: ShiftActor, i
           status: "SUCCEEDED", amount, attemptIdentifier: request.attemptIdentifier, requestFingerprint: fingerprint,
           ...details, succeededAt } });
         await tx.order.update({ where: { id: order.id }, data: { status: "PAID", paidAt: succeededAt, revision: { increment: 1 } } });
+        await consumePaidOrderStock(tx, payment.id, actor.id);
         await tx.auditLog.create({ data: { actorId: actor.id, action: "PAYMENT_SUCCEEDED", entityType: "Payment", entityId: payment.id,
           details: { orderId: order.id, shiftId: shift!.id, method: payment.method, amount, revisionBefore: order.revision, revisionAfter: order.revision + 1 } } });
         return result(payment, false);
@@ -60,6 +63,8 @@ export async function recordManualPayment(db: PrismaClient, actor: ShiftActor, i
       throw error;
     }
   } catch (error) {
+    if (error instanceof SaleStockError) throw new PaymentError(error.code);
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") throw new PaymentError("INVENTORY_CONFLICT");
     if (error instanceof PaymentError) throw error;
     if (error instanceof ShiftError) throw new PaymentError(error.code === "FORBIDDEN" ? "FORBIDDEN" : "NO_ACTIVE_SHIFT");
     // Commit may have succeeded; callers must recover using the SAME attempt key.

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { test } from "node:test";
-import type { PrismaClient } from "../../generated/prisma/client";
+import { Prisma, type PrismaClient } from "../../generated/prisma/client";
 import { createReceiptPrintJob } from "../../lib/printing/printer";
 import { FakePrinterAdapter } from "../../lib/printing/testing/fake-printer";
 
@@ -76,6 +76,8 @@ function createPosDatabase(actor: { id: string; name: string }, product: StoredP
   const orders: StoredOrder[] = [];
   const payments: StoredPayment[] = [];
   const auditActions: string[] = [];
+  const ingredient = { id: randomUUID(), baseUnit: "ml", active: true, currentStock: new Prisma.Decimal("1000") };
+  const movements: { paymentId: string; quantity: string; stockAfter: string }[] = [];
   let orderSequence = BigInt(0);
 
   const paymentRows = (shiftId: string) => payments.filter((payment) => {
@@ -84,6 +86,12 @@ function createPosDatabase(actor: { id: string; name: string }, product: StoredP
   });
 
   const tx = {
+    recipe: { findMany: async () => [{ productId: product.id, items: [{ ingredientId: ingredient.id, unit: "ml", quantity: new Prisma.Decimal("120") }] }] },
+    ingredient: {
+      findUnique: async () => ingredient,
+      update: async ({ data }: { data: { currentStock: string } }) => { ingredient.currentStock = new Prisma.Decimal(data.currentStock); return ingredient; },
+    },
+    stockMovement: { create: async ({ data }: { data: typeof movements[number] }) => { movements.push(data); return data; } },
     shift: {
       findFirst: async () => shifts.find((shift) => shift.status === "OPEN") ?? null,
       create: async ({ data }: { data: { cashierId: string; status: "OPEN"; openingCash: number } }) => {
@@ -193,6 +201,10 @@ function createPosDatabase(actor: { id: string; name: string }, product: StoredP
         orders.find((order) => order.id === where.orderId)?.items.map(({ lineTotal }) => ({ lineTotal })) ?? [],
     },
     payment: {
+      findUniqueOrThrow: async ({ where }: { where: { id: string } }) => {
+        const payment = payments.find(candidate => candidate.id === where.id)!;
+        return { ...payment, order: orders.find(candidate => candidate.id === payment.orderId)! };
+      },
       findUnique: async ({ where }: { where: { attemptIdentifier: string } }) =>
         payments.find((payment) => payment.attemptIdentifier === where.attemptIdentifier) ?? null,
       findFirst: async ({ where }: { where: { order: { shiftId: string }; status: string } }) =>
@@ -244,6 +256,8 @@ function createPosDatabase(actor: { id: string; name: string }, product: StoredP
       if (query.includes('FROM "Payment"')) {
         return payments.filter((payment) => payment.orderId === values[0]).map(({ status }) => ({ status }));
       }
+      if (query.includes('FROM "Product"')) return [{ id: product.id }];
+      if (query.includes('FROM "Ingredient"')) return [{ id: ingredient.id }];
       throw new Error(`Unexpected SQL in POS fixture: ${query}`);
     },
   };
@@ -253,7 +267,7 @@ function createPosDatabase(actor: { id: string; name: string }, product: StoredP
     $transaction: async (work: (client: typeof tx) => Promise<unknown>) => work(tx),
   } as unknown as PrismaClient;
 
-  return { db, shifts, orders, payments, auditActions };
+  return { db, shifts, orders, payments, auditActions, ingredient, movements };
 }
 
 test("POS lifecycle: open, create, edit, pay, receipt, settle, close", async (t) => {
@@ -326,6 +340,9 @@ test("POS lifecycle: open, create, edit, pay, receipt, settle, close", async (t)
   assert.equal(paid.changeAmount, 6000);
   assert.equal(state.orders[0].status, "PAID");
   assert.equal(state.orders[0].revision, 3);
+  assert.equal(state.ingredient.currentStock.toFixed(), "760");
+  assert.equal(state.movements.length, 1);
+  assert.equal(state.movements[0].quantity, "240.000");
 
   product.name = "Renamed Menu Coffee";
   product.price = 99000;
@@ -354,6 +371,8 @@ test("POS lifecycle: open, create, edit, pay, receipt, settle, close", async (t)
   assert.equal((await printJob.print()).status, "succeeded");
   assert.strictEqual(printer.attempts[0], printer.attempts[1]);
   assert.equal(state.payments.length, 1);
+  assert.equal(state.ingredient.currentStock.toFixed(), "760");
+  assert.equal(state.movements.length, 1);
   assert.deepEqual({ orders: state.orders, payments: state.payments, audit: state.auditActions }, savedFinancialState);
 
   const settlement = await getShiftSettlement(state.db, opened.shift.id);

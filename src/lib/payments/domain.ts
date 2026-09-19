@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { MAX_ORDER_MONEY, snapshotLineTotal, sumOrderLines } from "../orders/domain";
+import type { SaleStockErrorCode } from "../inventory/sale-domain";
 
 export class PaymentError extends Error {
-  constructor(public readonly code: "INVALID_INPUT" | "FORBIDDEN" | "NO_ACTIVE_SHIFT" | "ORDER_NOT_FOUND" | "ORDER_NOT_PAYABLE" | "REVISION_CONFLICT" | "PAYMENT_BLOCKED" | "IDEMPOTENCY_CONFLICT" | "PRODUCT_UNAVAILABLE" | "PRICE_CHANGED" | "INVALID_ORDER_TOTAL" | "INSUFFICIENT_CASH" | "PAYMENT_FAILED") {
+  constructor(public readonly code: SaleStockErrorCode | "INVALID_INPUT" | "FORBIDDEN" | "NO_ACTIVE_SHIFT" | "ORDER_NOT_FOUND" | "ORDER_NOT_PAYABLE" | "REVISION_CONFLICT" | "PAYMENT_BLOCKED" | "IDEMPOTENCY_CONFLICT" | "PRODUCT_UNAVAILABLE" | "PRICE_CHANGED" | "INVALID_ORDER_TOTAL" | "INSUFFICIENT_CASH" | "PAYMENT_FAILED") {
     super(code);
     this.name = "PaymentError";
   }

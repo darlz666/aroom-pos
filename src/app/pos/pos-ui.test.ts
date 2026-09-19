@@ -614,6 +614,24 @@ test("later rejection cannot release an uncertain payment or replace its attempt
   assert.equal(h.closed(), 0); assert.equal(h.requests.length, 2);
 });
 
+test("inventory errors block payment success, require review and preserve the EDC no-recharge warning", async () => {
+  for (const [code, message] of [
+    ["RECIPE_NOT_CONFIGURED", /belum memiliki resep/],
+    ["RECIPE_INGREDIENT_INACTIVE", /bahan nonaktif/],
+    ["INSUFFICIENT_STOCK", /Stok bahan tidak cukup/],
+    ["INVALID_INVENTORY_STATE", /persediaan tidak valid/],
+    ["INVENTORY_CONFLICT", /Persediaan sedang berubah/],
+  ] as const) {
+    const h = paymentHarness(); h.click("BCA EDC"); h.input(true); h.click("Konfirmasi pembayaran EDC");
+    await h.resolve({ success: false, code });
+    assert.match(text(h.render()), message);
+    assert.match(text(h.render()), /jangan proses pembayaran lagi di EDC/);
+    assert.equal(h.paid(), 0);
+    h.click("Konfirmasi pembayaran EDC"); assert.equal(h.requests.length, 1);
+    h.click("Kembali ke pesanan"); assert.equal(h.closed(), 1);
+  }
+});
+
 test("POS payment entry locks stale order handlers and closes through authoritative reload", async () => {
   const h = persistedHarness(); await h.select();
   const add = h.button("Tambah Latte").props.onClick as () => void;

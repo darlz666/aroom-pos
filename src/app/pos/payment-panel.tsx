@@ -22,6 +22,11 @@ const messages = {
   PRICE_CHANGED: "Harga berubah. Kembali dan periksa pesanan sebelum membayar.",
   INVALID_ORDER_TOTAL: "Total pesanan tidak valid. Minta admin memeriksa pesanan.",
   INSUFFICIENT_CASH: "Uang diterima kurang dari total pesanan.",
+  RECIPE_NOT_CONFIGURED: "Produk belum memiliki resep. Pembayaran belum tercatat. Minta admin atau petugas stok mengatur resep, lalu muat ulang pesanan.",
+  RECIPE_INGREDIENT_INACTIVE: "Resep memakai bahan nonaktif. Pembayaran belum tercatat. Minta admin atau petugas stok memeriksa resep.",
+  INSUFFICIENT_STOCK: "Stok bahan tidak cukup. Pembayaran belum tercatat. Periksa stok dan pesanan sebelum mencoba lagi.",
+  INVALID_INVENTORY_STATE: "Data persediaan tidak valid. Pembayaran belum tercatat. Minta admin atau petugas stok memeriksa data.",
+  INVENTORY_CONFLICT: "Persediaan sedang berubah. Pembayaran belum tercatat. Muat ulang pesanan sebelum mencoba lagi.",
   PAYMENT_FAILED: "Status pembayaran belum dapat dipastikan. Periksa koneksi lalu periksa hasil dengan permintaan yang sama. Jangan menerima pembayaran lagi atau meninggalkan halaman ini.",
 };
 

@@ -135,7 +135,8 @@ Milestone 7B approves the Stock Management domain/database foundation in section
 20. Milestone 7C additionally approves supplier management and Stock In backend
 actions in section 21. Milestone 7D approves the Stock Management UI in section
 22. Milestone 7E's required costing design is defined in section 23. Other
-inventory workflows remain deferred.
+inventory workflows remain deferred except POS sale consumption explicitly
+approved by Milestone 7G in section 24.
 
 ## 5. Roles and Permissions
 
@@ -894,3 +895,44 @@ and integer-only ingredient unit-cost design in sections 20-22 for 7E. Existing
 - Test migration against complete, missing, and inconsistent legacy histories,
   including concurrent posting order. Run relevant lint, TypeScript typecheck,
   domain tests, and database integration tests before declaring implementation done.
+
+## 24. POS Stock Deduction (Milestone 7G)
+
+- Successful POS payment finalization records payment success, the PAID order,
+  ingredient deductions, immutable SALE_CONSUMPTION movements and payment audit
+  in one database transaction. No stock is consumed by recipe edits, unpaid or
+  cancelled orders, or failed/pending/expired payment attempts. Any deduction
+  failure rolls back the entire local payment/order transaction.
+- Resolve saved OrderItem.productId through the existing Product -> Recipe ->
+  RecipeItem -> Ingredient relations. Use current server-side recipes at
+  finalization, protected by Product locks shared with 7F recipe saves through
+  commit. The existing recipe model has no activation flag; a missing or empty
+  recipe is not configured. Referencing any inactive ingredient rejects the sale.
+- Aggregate every order line and product's consumption against each shared
+  Ingredient balance. Reuse canonical g/ml/pcs units and kg/L conversions, with
+  exact integer-thousandths arithmetic. Never use client recipe data, round
+  stock quantities, silently skip invalid ingredients, or allow negative stock.
+- Lock ingredients in ID order, as receiving does, and read balances after
+  acquiring locks. Concurrent sales/receipts use the preceding committed balance.
+  Insufficient stock and invalid inventory state produce controlled business
+  errors. WAC is independent of selling prices and is not changed by consumption;
+  unknown WAC does not prevent a quantity-based sale. COGS/Finance reporting,
+  reservations, stock adjustment UI and automatic availability changes are deferred.
+- Reuse payment attempt idempotency. A committed retry returns the saved payment
+  before reading current recipes or consuming stock, including after shift close
+  or later recipe changes. Do not retroactively consume pre-7G paid orders.
+- Reuse StockMovement with a positive consumption magnitude, canonical unit,
+  stockAfter, server timestamp, actor where applicable, and Payment source ID.
+  Its paymentId foreign key preserves the payment and linked immutable order
+  identity; a unique payment/ingredient pair prevents duplicate movements.
+  Existing movement history is not rewritten.
+- Current integration covers cash and manual BCA EDC finalization. QRIS remains
+  unavailable until its existing deferred provider workflow is implemented; that
+  workflow must use the same atomic consumption boundary on verified success.
+  Local rollback cannot reverse an already approved physical EDC charge. Keep
+  the existing instruction to check recording and never charge again on error.
+- Preserve existing POS architecture, authorization, order/receipt snapshots,
+  printer isolation and 7F permissions (including Finance recipe reads). Add only
+  payment error messages for missing recipes, inactive ingredients, insufficient
+  stock, inventory conflicts and invalid inventory state. No stock-deduction
+  action is exposed to clients.

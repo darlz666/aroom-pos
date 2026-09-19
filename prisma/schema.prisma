@@ -184,6 +184,7 @@ model Payment {
   succeededAt       DateTime?             @db.Timestamptz(3)
   order             Order                 @relation(fields: [orderId], references: [id], onDelete: Restrict)
   notifications     PaymentNotification[]
+  stockMovements    StockMovement[]
 
   @@index([orderId])
   @@index([midtransReference])
@@ -332,10 +333,14 @@ model StockMovement {
   sourceType   String?
   sourceId     String?           @db.Uuid
   actorId      String?           @db.Uuid
+  // Sale identity; order is available through the immutable Payment.orderId.
+  paymentId    String?           @db.Uuid
   createdAt    DateTime          @default(now()) @db.Timestamptz(3)
   ingredient   Ingredient        @relation(fields: [ingredientId, unit], references: [id, baseUnit], onDelete: Restrict, onUpdate: Restrict)
   actor        User?             @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  payment      Payment?          @relation(fields: [paymentId], references: [id], onDelete: Restrict)
 
+  @@unique([paymentId, ingredientId])
   @@index([ingredientId, createdAt])
   @@index([sourceType, sourceId])
   @@index([actorId])

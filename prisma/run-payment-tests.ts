@@ -36,7 +36,8 @@ try {
     "src/lib/orders/domain.test.ts", "src/lib/orders/service.test.ts", "src/lib/orders/actions.test.ts",
     "src/lib/shifts/domain.test.ts", "src/lib/shifts/service.test.ts", "src/lib/shifts/close.test.ts",
     "prisma/payment-foundation.test.ts", "prisma/order-integrity.test.ts", "prisma/create-order.test.ts",
-    "prisma/edit-cancel-order.test.ts", "prisma/close-shift.test.ts"]);
+    "prisma/edit-cancel-order.test.ts", "prisma/close-shift.test.ts", "prisma/pos-stock-deduction.test.ts",
+    "src/lib/inventory/sale-domain.test.ts"]);
 } finally {
   try { if (created) await control.$executeRawUnsafe(`DROP DATABASE "${name}" WITH (FORCE)`); }
   finally { await control.$disconnect(); }

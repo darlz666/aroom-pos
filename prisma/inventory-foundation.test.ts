@@ -97,13 +97,14 @@ test("inventory PostgreSQL foundation (all fixtures rolled back)", async t => {
 
       const movementData = { ingredientId: oatmilk.id, type: "PURCHASE" as const, quantity: "12000", unit: "ml" as const, stockAfter: "12000", actorId: actor.id };
       const movement = await tx.stockMovement.create({ data: movementData });
-      await t.test("all movement types supported with optional actor/source, no balance mutation", async () => {
-        for (const type of ["SALE_CONSUMPTION", "ADJUSTMENT_IN", "ADJUSTMENT_OUT"] as const) {
+      await t.test("non-sale movement types support optional actor/source without balance mutation", async () => {
+        for (const type of ["ADJUSTMENT_IN", "ADJUSTMENT_OUT"] as const) {
           const entry = await tx.stockMovement.create({ data: { ...movementData, type, actorId: null, sourceType: "Fixture", sourceId: randomUUID() } });
           assert.equal(entry.type, type); assert.equal(entry.actorId, null);
         }
         assert.equal((await tx.ingredient.findUniqueOrThrow({ where: { id: oatmilk.id } })).currentStock.toString(), "12000");
       });
+      await rejected("7G sale movements require payment identity", () => tx.stockMovement.create({ data: { ...movementData, type: "SALE_CONSUMPTION" } }), "23514");
       await rejected("movement quantity must be positive", () => tx.stockMovement.create({ data: { ...movementData, quantity: 0 } }), "23514");
       await rejected("movement resulting stock cannot be negative", () => tx.stockMovement.create({ data: { ...movementData, stockAfter: -1 } }), "23514");
       await rejected("movement unit must match ingredient", () => tx.stockMovement.create({ data: { ...movementData, unit: "pcs" } }), "P2003");
