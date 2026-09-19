@@ -15,6 +15,7 @@ test("every action rejects restricted roles and revoked sessions before service/
     const mocks = [{ getCurrentUser: async () => user }, { prisma: trap }, require("next/dist/client/components/navigation.react-server")];
     paths.forEach((path, i) => { require.cache[path] = { id: path, filename: path, loaded: true, exports: mocks[i] } as NodeJS.Module; });
     const users = await import("../users/actions");
+    const inventory = await import("../inventory/actions");
     const orders = await import("../orders/actions");
     const shifts = await import("../shifts/actions");
     const { closeShiftAction } = await import("../shifts/close-action");
@@ -30,9 +31,12 @@ test("every action rejects restricted roles and revoked sessions before service/
       () => shifts.openShiftAction(0), () => shifts.getActiveShiftAction(),
       () => closeShiftAction({ shiftId: randomUUID(), countedCash: "0", discrepancyNote: "", adminCloseReason: "" }),
       () => settlement.getShiftSettlementAction(randomUUID()), () => submitPaymentAction({})];
+    const inventoryCalls = [() => inventory.listSuppliersAction(), () => inventory.createSupplierAction({}),
+      () => inventory.updateSupplierAction({}), () => inventory.createStockInAction({}), () => inventory.getStockInAction(randomUUID()),
+      () => inventory.listIngredientsAction(), () => inventory.listStockInsAction({})];
     for (const role of ["CASHIER", "STOCK_MANAGEMENT", "FINANCE", null] as const) {
       user = role ? { id: randomUUID(), name: "Staff", loginIdentifier: "staff", role } : null;
-      for (const call of [...adminCalls, ...(role !== "CASHIER" ? operationalCalls : [])]) {
+      for (const call of [...adminCalls, ...(role !== "CASHIER" ? operationalCalls : []), ...(role !== "STOCK_MANAGEMENT" ? inventoryCalls : [])]) {
         await assert.rejects(call(), (error: unknown) => {
           assert.equal((error as { digest: string }).digest, `NEXT_REDIRECT;replace;${role ? "/" : "/login"};307;`);
           return true;

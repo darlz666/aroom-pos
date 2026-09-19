@@ -75,7 +75,7 @@ test("user management page guards before listing and admin navigation is reachab
     "next/link": { default: "a" }, "@/lib/auth/authorization": { requireRole: async () => admin },
   });
   const links = elements(await adminPage.default()).filter(e => e.props.href).map(e => e.props.href);
-  assert.deepEqual(links, ["/admin/users", "/admin/reports", "/"]);
+  assert.deepEqual(links, ["/admin/users", "/inventory", "/admin/reports", "/"]);
 });
 test("all roles and statuses display with self-access controls disabled", () => {
   const h = harness();

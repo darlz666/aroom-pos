@@ -76,6 +76,7 @@ model User {
   orders          Order[]
   auditLogs       AuditLog[]
   stockMovements  StockMovement[]
+  stockIns        StockIn[]
 }
 
 model Category {
@@ -233,6 +234,7 @@ model Ingredient {
   updatedAt    DateTime        @updatedAt @db.Timestamptz(3)
   recipeItems  RecipeItem[]
   movements    StockMovement[]
+  stockInItems StockInItem[]
 
   // Composite foreign keys enforce canonical units in recipes and history.
   @@unique([id, baseUnit])
@@ -247,6 +249,46 @@ model Supplier {
   active    Boolean  @default(true)
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
+  stockIns  StockIn[]
+}
+
+// Posted receiving records are immutable. Retry keys identify original intent.
+model StockIn {
+  id                 String        @id @default(uuid()) @db.Uuid
+  referenceNumber    String        @unique
+  idempotencyKey     String        @unique @db.Uuid
+  requestFingerprint String
+  supplierId         String        @db.Uuid
+  supplierNameSnapshot String
+  receivedAt         DateTime      @db.Timestamptz(3)
+  actorId            String        @db.Uuid
+  notes              String?
+  createdAt          DateTime      @default(now()) @db.Timestamptz(3)
+  supplier           Supplier      @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  actor              User          @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  items              StockInItem[]
+
+  @@index([supplierId, receivedAt])
+  @@index([actorId])
+}
+
+model StockInItem {
+  id                     String        @id @default(uuid()) @db.Uuid
+  stockInId              String        @db.Uuid
+  ingredientId           String        @db.Uuid
+  ingredientNameSnapshot String
+  inputQuantity          Decimal       @db.Decimal(18, 3)
+  inputUnit              InventoryUnit
+  baseQuantity           Decimal       @db.Decimal(18, 3)
+  baseUnit               InventoryUnit
+  // Integer rupiah per ONE canonical base unit, independent of inputUnit.
+  unitCost               Int
+  lineTotal              Int
+  stockIn                StockIn       @relation(fields: [stockInId], references: [id], onDelete: Restrict)
+  ingredient             Ingredient    @relation(fields: [ingredientId, baseUnit], references: [id, baseUnit], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([stockInId, ingredientId])
+  @@index([ingredientId, baseUnit])
 }
 
 model Recipe {
@@ -272,7 +314,7 @@ model RecipeItem {
 }
 
 // Append-only SQL protection: corrections will be new movements, never edits.
-// No application writer exists in this milestone.
+// Receiving writes PURCHASE movements atomically with the shared balance.
 model StockMovement {
   id           String            @id @default(uuid()) @db.Uuid
   ingredientId String            @db.Uuid

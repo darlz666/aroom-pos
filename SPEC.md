@@ -34,7 +34,7 @@ This document is the single source of truth for product behavior and MVP scope.
 - Logout
 - Admin role
 - Cashier role
-- Stock Management role (restricted landing only)
+- Stock Management role (inventory screens; see section 22)
 - Finance role (restricted landing only)
 
 ### Cashier Shift
@@ -129,9 +129,10 @@ The following are NOT part of MVP:
 
 Do not implement deferred scope unless explicitly approved later.
 
-Milestone 7B explicitly approves only the Stock Management domain/database
-foundation described in section 20. Inventory and supplier workflows remain
-deferred; the existing role permissions and operational behavior are unchanged.
+Milestone 7B approves the Stock Management domain/database foundation in section
+20. Milestone 7C additionally approves supplier management and Stock In backend
+actions in section 21. Milestone 7D approves the Stock Management UI in section
+22. Other inventory workflows remain deferred.
 
 ## 5. Roles and Permissions
 
@@ -171,9 +172,15 @@ Cashier cannot manage users or perform sensitive administrative configuration. E
 - An admin cannot deactivate their own account or change their own role away from ADMIN. At least one active ADMIN must remain; concurrent access changes must preserve these rules.
 - Record user creation and actual role/status changes in AuditLog, in the same transaction as the change, without passwords or hashes. Repeating an already-applied role/status change is a no-op.
 - Reload the active user and role from the database for every protected request; deactivation and role changes apply to existing sessions on their next request.
-- `/` keeps the register workflow for ADMIN and CASHIER. STOCK_MANAGEMENT and FINANCE see a role-specific “module not available” landing with logout, without shift, POS, orders, receipts, reports, or user-management access. These roles do not introduce inventory or finance features.
+- `/` keeps the register workflow for ADMIN and CASHIER. STOCK_MANAGEMENT redirects to `/inventory`; FINANCE sees its “module not available” landing with logout. Neither role has shift, POS, orders, receipts, reports, or user-management access.
 - Protect operational pages and server actions independently. Reports and administration remain ADMIN-only. ADMIN navigation links the register, administration, Access Management, and existing daily reports.
 - Disable duplicate UI submissions. On an uncertain write or lost connection, reload the user list before allowing another mutation. No user deletion or password reset is included in this scope.
+
+Milestone 7C grants active ADMIN and STOCK_MANAGEMENT users access to the supplier
+and Stock In backend actions (section 21). Milestone 7D adds their inventory
+screens (section 22). STOCK_MANAGEMENT cannot use POS, shifts, orders, receipts,
+reports, or Access Management. CASHIER and FINANCE cannot use inventory actions
+or screens.
 
 ## 6. Pages / Screens
 
@@ -189,7 +196,8 @@ Cashier cannot manage users or perform sensitive administrative configuration. E
 | Daily Report | View daily sales, payment-method totals, and shift reconciliation. |
 | Menu Management | Manage categories, products, prices, and availability. |
 | User Management | ADMIN-only Access Management at `/admin/users`: list, create, assign roles, activate/deactivate. |
-| Restricted Role Landing | STOCK_MANAGEMENT and FINANCE module placeholder and logout. |
+| Stock Management | ADMIN/STOCK_MANAGEMENT inventory, supplier, receiving, and history screens at `/inventory`. |
+| Restricted Role Landing | FINANCE module placeholder and logout. |
 
 Payment and receipt screens may be dialogs or panels within the POS if that improves the cashier workflow.
 
@@ -606,6 +614,14 @@ Do not create a separate report table unless later required.
 - Ingredient, supplier, product recipe relations, units, and immutable movement schema.
 - Domain validation and optional ingredient unit cost only; see section 20.
 
+### Milestone 7C — Stock In + Supplier Management
+
+- Supplier metadata services and atomic inventory receiving; see section 21.
+
+### Milestone 7D — Stock Management UI
+
+- Protected inventory screens using existing models and receiving actions; see section 22.
+
 ### Milestone 8 — Manual BCA EDC payment
 
 ### Milestone 9 — Midtrans QRIS sandbox
@@ -651,3 +667,75 @@ Each milestone should be completed and tested before expanding scope. Production
 - No inventory pages, actions, permission grants, Stock In, Recipe UI, HPP,
   weighted-average/FIFO/LIFO costing, POS stock consumption, or Finance changes.
   STOCK_MANAGEMENT and FINANCE retain their restricted landing and logout.
+
+## 21. Stock In + Supplier Management (Milestone 7C)
+
+- Backend only. Active ADMIN and STOCK_MANAGEMENT may list, create, edit, and
+  activate/deactivate suppliers, create Stock In, and read a saved Stock In.
+  Every action uses the existing session authorization; services recheck the
+  database role and active status. No inventory pages or other role grants.
+- Reuse Supplier metadata validation and active flag. No hard-delete action.
+  Supplier creation and actual metadata changes use the existing transactional
+  AuditLog. Supplier names remain nonunique display names as in 7B.
+- StockIn stores a unique ID, server-generated unique reference number, supplier
+  and supplier-name snapshot, explicit receivedAt instant, authenticated actor,
+  optional notes, creation timestamp, and immutable StockInItem records.
+- Each item references the shared Ingredient, snapshots its name, and stores
+  positive input quantity/unit, normalized base quantity/unit, integer-rupiah
+  unitCost per ONE canonical base unit, and server-calculated lineTotal.
+  Costs must be nonnegative; fractional-rupiah totals and 32-bit integer overflow
+  are rejected without rounding. Ingredient.unitCost is not changed; weighted
+  average costing, HPP, and valuation remain deferred.
+- Accept 1–100 distinct ingredients per receipt. Reuse exact 7B conversions,
+  precision and quantity limits. No product-specific stock, packaging conversion,
+  purchase orders, stock consumption, or automatic product availability changes.
+- Validate supplier/ingredients as active, normalize all items, create the receipt
+  and items, insert one PURCHASE movement per ingredient, and update shared
+  Ingredient.currentStock in ONE database transaction. Lock ingredients in ID
+  order; overflow or any write failure rolls back the entire receipt.
+- Movement sourceType is StockIn and sourceId is the receipt ID. Record canonical
+  quantity, resulting balance and actor. Stock In headers/items and movements
+  cannot be updated or deleted. Supplier/ingredient edits never rewrite history.
+- A required UUID idempotency key identifies each submission. Concurrent or later
+  identical retries by the same actor return the committed receipt without adding
+  stock. Reusing the key for different content/actor is rejected. After lost
+  connectivity or an uncertain response, retry the same payload with the SAME
+  key; never generate a new key for that delivery. No offline queue.
+- receivedAt requires ISO date/time with explicit UTC offset; store an instant
+  and use Asia/Jakarta for future display/reporting. createdAt is server time.
+
+## 22. Stock Management UI (Milestone 7D)
+
+- `/inventory` is server-guarded with the existing inventory authorization for
+  active ADMIN and STOCK_MANAGEMENT only. Every read/write action independently
+  authenticates and rechecks database access. CASHIER, FINANCE, and anonymous
+  users are rejected. ADMIN navigation links inventory; STOCK_MANAGEMENT lands
+  there from `/`. Logout remains available without a cashier shift.
+- Touch-friendly, landscape-first tabs: Stok bahan, Supplier, Stock In, and
+  Riwayat Stock In. Preserve the form while switching tabs. No new models.
+- Show Ingredient name, exact currentStock, base unit, minimumStock and active
+  state. Calculate stock status on the server: zero = Habis, positive stock at
+  or below minimum = Stok rendah, above minimum = Tersedia. Inactive is a separate
+  label. Search names and filter status; failed reads never masquerade as zero.
+- Suppliers use existing create/update/list actions, including contact, phone,
+  address and active state. No deletion. Prevent duplicate submissions and require
+  authoritative list reload after an uncertain write before allowing another.
+- Stock In selects active suppliers and ingredients, accepts input quantities,
+  compatible units, integer-rupiah cost per canonical unit, optional notes and
+  received date/time explicitly in WIB. Support multiple distinct ingredients.
+  The 7C backend owns conversion, validation, costs, movements and balances.
+- Block duplicate clicks and offline submissions. Retain an unresolved request's
+  exact payload and idempotency key in sessionStorage scoped to actor and browser
+  tab BEFORE sending; fail before sending if recovery storage is unavailable.
+  Recovery after reload is explicit with the same payload/key, never automatic
+  or an offline transaction queue. Lock edits while unresolved, including after
+  later errors. Clear recovery only on success or a definite first-attempt
+  rejection. Confirm success from the server before enabling a new receipt.
+- After receiving, reload stock and history. History uses bounded 25-record
+  pages ordered by creation time/ID, with supplier snapshots, reference, received
+  time, actor, item count and server total. Details show saved names, quantities,
+  units, costs, notes and timestamps in Asia/Jakarta, without edit/delete controls.
+  Superseded reads cannot replace newer results; failures offer explicit retry.
+- Ingredient creation/editing, recipe editing, POS stock consumption, HPP,
+  stock adjustment/opname, Finance workflows and expanded role permissions remain
+  outside this milestone.

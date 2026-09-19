@@ -59,7 +59,7 @@ test("authentication backend with isolated database and request cookies", async 
   const { authenticateCredentials } = await import("./credentials");
   const { createSession, getSessionIdentity } = await import("./session");
   const { getCurrentUser } = await import("./current-user");
-  const { requireUser, requireRole, requireOperator } = await import("./authorization");
+  const { requireUser, requireRole, requireOperator, requireInventoryManager } = await import("./authorization");
   const { loginAction, logoutAction } = await import("./actions");
   const { openShiftAction, getActiveShiftAction } = await import("../shifts/actions");
   try {
@@ -152,18 +152,23 @@ test("authentication backend with isolated database and request cookies", async 
         cookie = undefined;
         await assert.rejects(requireUser(), redirectsTo("/login"));
         await assert.rejects(requireRole("ADMIN"), redirectsTo("/login"));
+        await assert.rejects(requireInventoryManager(), redirectsTo("/login"));
         await createSession(user.id);
         const originalCookie = cookie;
         assert.deepEqual(await requireUser(), safeUser());
         assert.deepEqual(await requireRole("ADMIN"), safeUser());
         assert.deepEqual(await requireOperator(), safeUser());
+        assert.deepEqual(await requireInventoryManager(), safeUser());
         user.role = "CASHIER";
+        await assert.rejects(requireInventoryManager(), redirectsTo("/"));
         assert.deepEqual(await requireUser(), safeUser());
         await assert.rejects(requireRole("ADMIN"), redirectsTo("/"));
         assert.deepEqual(await requireRole("CASHIER"), safeUser());
         assert.deepEqual(await requireOperator(), safeUser());
         for (const role of ["STOCK_MANAGEMENT", "FINANCE"] as const) {
           user.role = role;
+          if (role === "STOCK_MANAGEMENT") assert.deepEqual(await requireInventoryManager(), safeUser());
+          else await assert.rejects(requireInventoryManager(), redirectsTo("/"));
           assert.deepEqual(await authenticateCredentials("admin", password), safeUser());
           assert.deepEqual(await requireUser(), safeUser());
           await assert.rejects(requireRole("ADMIN"), redirectsTo("/"));
@@ -174,6 +179,7 @@ test("authentication backend with isolated database and request cookies", async 
         user.role = "ADMIN";
         assert.deepEqual(await requireRole("ADMIN"), safeUser());
         user.active = false;
+        await assert.rejects(requireInventoryManager(), redirectsTo("/login"));
         assert.equal(await getCurrentUser(), null);
         await assert.rejects(requireUser(), redirectsTo("/login"));
         await assert.rejects(requireRole("ADMIN"), redirectsTo("/login"));

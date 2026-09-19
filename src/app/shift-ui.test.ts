@@ -40,7 +40,7 @@ test("root authenticates first and renders only permitted state and staff fields
   const CloseShiftForm = () => null;
   const page = load("./page.tsx", {
     "next/link": { default: "a" },
-    "next/navigation": { redirect() {} },
+    "next/navigation": { redirect(path: string) { throw new Error(`redirect ${path}`); } },
     "@/lib/auth/authorization": { requireUser: async () => {
       if (!authenticated) throw new Error("redirect login");
       return { name: "Staff", role, id: "private-id", passwordHash: "private-hash", session: "private-session", token: "private-token", loginIdentifier: "private-login" };
@@ -53,7 +53,10 @@ test("root authenticates first and renders only permitted state and staff fields
   await assert.rejects(async () => page.default(), /redirect login/);
   assert.equal(reads, 0);
   authenticated = true;
-  for (role of ["STOCK_MANAGEMENT", "FINANCE"]) {
+  role = "STOCK_MANAGEMENT";
+  await assert.rejects(async () => page.default(), /redirect \/inventory/);
+  assert.equal(reads, 0);
+  for (role of ["FINANCE"]) {
     const landing = await page.default();
     assert.equal(reads, 0);
     assert.match(text(landing), /Modul ini belum tersedia/);

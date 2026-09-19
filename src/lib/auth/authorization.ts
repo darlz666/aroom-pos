@@ -23,3 +23,10 @@ export async function requireOperator(): Promise<AuthenticatedUser> {
   if (user.role !== "ADMIN" && user.role !== "CASHIER") redirect("/");
   return user;
 }
+
+// Milestone 7C grants only supplier/receiving backend access to Stock Management.
+export async function requireInventoryManager(): Promise<AuthenticatedUser> {
+  const user = await requireUser();
+  if (user.role !== "ADMIN" && user.role !== "STOCK_MANAGEMENT") redirect("/");
+  return user;
+}

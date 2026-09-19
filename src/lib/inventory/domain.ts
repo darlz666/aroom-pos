@@ -1,7 +1,7 @@
 import { Prisma, type Ingredient, type InventoryUnit, type Product } from "../../generated/prisma/client";
 
 export class InventoryError extends Error {
-  constructor(public readonly code: "INVALID_INPUT" | "INVALID_ID" | "INVALID_UNIT" | "INCOMPATIBLE_UNIT" | "INVALID_QUANTITY" | "DUPLICATE_INGREDIENT" | "INGREDIENT_NOT_FOUND" | "PRODUCT_NOT_FOUND") {
+  constructor(public readonly code: "INVALID_INPUT" | "INVALID_ID" | "INVALID_UNIT" | "INCOMPATIBLE_UNIT" | "INVALID_QUANTITY" | "DUPLICATE_INGREDIENT" | "INGREDIENT_NOT_FOUND" | "PRODUCT_NOT_FOUND" | "FORBIDDEN" | "SUPPLIER_NOT_FOUND" | "SUPPLIER_INACTIVE" | "INGREDIENT_INACTIVE" | "STOCK_IN_NOT_FOUND" | "IDEMPOTENCY_CONFLICT" | "INVALID_COST") {
     super(code);
     this.name = "InventoryError";
   }
@@ -16,7 +16,7 @@ const conversions = {
 } as const;
 const maxQuantity = new Prisma.Decimal("999999999999999.999");
 
-function object(value: unknown, keys: readonly string[]): Record<string, unknown> {
+export function inventoryObject(value: unknown, keys: readonly string[]): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(key => !keys.includes(key))) {
     throw new InventoryError("INVALID_INPUT");
   }
@@ -79,7 +79,7 @@ function active(value: unknown): boolean {
 /** Metadata only: the server initializes stock to zero. Client balances/costs
  * are rejected; future transaction services will own stock and costing writes. */
 export function ingredientInput(input: unknown) {
-  const raw = object(input, ["name", "baseUnit", "minimumStock", "active"]);
+  const raw = inventoryObject(input, ["name", "baseUnit", "minimumStock", "active"]);
   const ingredientName = name(raw.name);
   const baseUnit = canonicalUnit(raw.baseUnit);
   return {
@@ -89,28 +89,28 @@ export function ingredientInput(input: unknown) {
   };
 }
 
-function optionalText(value: unknown, limit: number): string | null {
+export function optionalInventoryText(value: unknown, limit: number): string | null {
   if (value === undefined || value === null) return null;
   if (typeof value !== "string" || value.length > limit) throw new InventoryError("INVALID_INPUT");
   return value.trim() || null;
 }
 
 export function supplierInput(input: unknown) {
-  const raw = object(input, ["name", "contact", "phone", "address", "active"]);
+  const raw = inventoryObject(input, ["name", "contact", "phone", "address", "active"]);
   return {
-    name: name(raw.name), contact: optionalText(raw.contact, 128),
-    phone: optionalText(raw.phone, 64), address: optionalText(raw.address, 1000),
+    name: name(raw.name), contact: optionalInventoryText(raw.contact, 128),
+    phone: optionalInventoryText(raw.phone, 64), address: optionalInventoryText(raw.address, 1000),
     active: active(raw.active),
   };
 }
 
 export function recipeInput(input: unknown) {
-  const raw = object(input, ["productId", "items"]);
+  const raw = inventoryObject(input, ["productId", "items"]);
   const productId = inventoryId(raw.productId);
   if (!Array.isArray(raw.items) || raw.items.length === 0) throw new InventoryError("INVALID_INPUT");
   const seen = new Set<string>();
   const items = raw.items.map(value => {
-    const item = object(value, ["ingredientId", "quantity", "unit"]);
+    const item = inventoryObject(value, ["ingredientId", "quantity", "unit"]);
     const ingredientId = inventoryId(item.ingredientId);
     if (seen.has(ingredientId)) throw new InventoryError("DUPLICATE_INGREDIENT");
     seen.add(ingredientId);

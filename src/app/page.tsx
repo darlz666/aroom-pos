@@ -15,9 +15,10 @@ export default async function Home() {
     redirect("/login");
   }
 
-  if (user.role === "STOCK_MANAGEMENT" || user.role === "FINANCE") {
+  if (user.role === "STOCK_MANAGEMENT") redirect("/inventory");
+  if (user.role === "FINANCE") {
     return <main lang="id" className="flex flex-1 flex-col items-center justify-center gap-6 bg-[#f6f4ef] p-8 text-center text-[#292e28]">
-      <h1 className="text-3xl font-semibold">{user.role === "FINANCE" ? "Finance" : "Stock Management"}</h1>
+      <h1 className="text-3xl font-semibold">Finance</h1>
       <p className="text-lg">{user.name}</p>
       <p>Akun Anda aktif. Modul ini belum tersedia.</p>
       <form action={logout}><button type="submit" className="min-h-14 rounded-lg border border-[#a8aea0] px-6 py-3 font-semibold">Logout</button></form>
