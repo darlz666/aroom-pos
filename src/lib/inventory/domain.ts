@@ -1,7 +1,7 @@
 import { Prisma, type Ingredient, type InventoryUnit, type Product } from "../../generated/prisma/client";
 
 export class InventoryError extends Error {
-  constructor(public readonly code: "INVALID_INPUT" | "INVALID_ID" | "INVALID_UNIT" | "INCOMPATIBLE_UNIT" | "INVALID_QUANTITY" | "DUPLICATE_INGREDIENT" | "INGREDIENT_NOT_FOUND" | "PRODUCT_NOT_FOUND" | "FORBIDDEN" | "SUPPLIER_NOT_FOUND" | "SUPPLIER_INACTIVE" | "INGREDIENT_INACTIVE" | "STOCK_IN_NOT_FOUND" | "IDEMPOTENCY_CONFLICT" | "INVALID_COST") {
+  constructor(public readonly code: "INVALID_INPUT" | "INVALID_ID" | "INVALID_UNIT" | "INCOMPATIBLE_UNIT" | "INVALID_QUANTITY" | "DUPLICATE_INGREDIENT" | "INGREDIENT_NOT_FOUND" | "PRODUCT_NOT_FOUND" | "FORBIDDEN" | "SUPPLIER_NOT_FOUND" | "SUPPLIER_INACTIVE" | "INGREDIENT_INACTIVE" | "STOCK_IN_NOT_FOUND" | "IDEMPOTENCY_CONFLICT" | "INVALID_COST" | "UNKNOWN_INGREDIENT_COST" | "RECIPE_NOT_FOUND") {
     super(code);
     this.name = "InventoryError";
   }

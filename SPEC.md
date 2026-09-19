@@ -12,7 +12,9 @@ This document is the single source of truth for product behavior and MVP scope.
 
 - One AROOM Coffee Bar outlet.
 - One POS register initially.
-- Currency is Indonesian Rupiah (IDR); all monetary values are integer rupiah.
+- Currency is Indonesian Rupiah (IDR); transaction amounts are integer rupiah.
+  Milestone 7E internal ingredient costs use scaled integers as defined in section
+  23; monetary calculations must never use floating-point arithmetic.
 - Business reporting timezone is Asia/Jakarta.
 - Android tablet is the main cashier device, using an installable PWA.
 - Landscape-first touchscreen UI with large touch targets and minimal typing.
@@ -132,7 +134,8 @@ Do not implement deferred scope unless explicitly approved later.
 Milestone 7B approves the Stock Management domain/database foundation in section
 20. Milestone 7C additionally approves supplier management and Stock In backend
 actions in section 21. Milestone 7D approves the Stock Management UI in section
-22. Other inventory workflows remain deferred.
+22. Milestone 7E's required costing design is defined in section 23. Other
+inventory workflows remain deferred.
 
 ## 5. Roles and Permissions
 
@@ -622,6 +625,12 @@ Do not create a separate report table unless later required.
 
 - Protected inventory screens using existing models and receiving actions; see section 22.
 
+### Milestone 7E - Ingredient WAC and current recipe HPP
+
+- Weighted Average Cost is the required ingredient costing method, never latest
+  purchase price. Precision, receiving safety, history, and acceptance criteria
+  are defined in section 23. This design does not mark implementation complete.
+
 ### Milestone 8 — Manual BCA EDC payment
 
 ### Milestone 9 — Midtrans QRIS sandbox
@@ -739,3 +748,149 @@ Each milestone should be completed and tested before expanding scope. Production
 - Ingredient creation/editing, recipe editing, POS stock consumption, HPP,
   stock adjustment/opname, Finance workflows and expanded role permissions remain
   outside this milestone.
+
+## 23. Ingredient Costing Decision (Milestone 7E)
+
+This section defines the required 7E design and supersedes the costing deferrals
+and integer-only ingredient unit-cost design in sections 20-22 for 7E. Existing
+7B-7D implementation remains unchanged until 7E is implemented and verified.
+
+### Ownership and scope
+
+- Each Ingredient has one immutable canonical inventory unit (g, ml, or pcs),
+  one currentStock balance, and one current weighted-average unit cost (WAC).
+- WAC belongs to inventory costing. Products/recipes reference the same shared
+  Ingredient; a recipe neither owns nor allocates stock and has no balance.
+- Recipe HPP reads current ingredient WAC on the server. Latest purchase price
+  must never substitute for WAC. Recipe edits and HPP reads do not change stock,
+  selling prices, POS availability, orders, payments, or printing.
+- No automatic POS stock deduction, historical HPP snapshots, stock adjustment,
+  purchase orders, Finance workflows, or new role permissions are introduced.
+  Existing ADMIN/STOCK_MANAGEMENT inventory authorization remains mandatory.
+
+### Integer precision and rounding policy
+
+- Store the one authoritative WAC as nullable PostgreSQL BIGINT / Prisma BigInt,
+  named weightedAverageUnitCostMicros: integer millionths of one rupiah per ONE
+  canonical unit. Rp1 = 1000000 micro-rupiah. Null means unknown; zero means a
+  known zero cost. Do not keep Ingredient.unitCost as a second writable costing
+  authority after migration.
+- Whole-rupiah WAC per ml/g would discard meaningful purchase precision. Six
+  decimal places preserve fractional costs while keeping storage integer-based.
+  This is a bounded fixed-point approximation, not an exact recurring fraction;
+  each receipt rounds WAC once and subsequent receipts use that saved WAC.
+- Parse decimal quantity strings into integer thousandths of the canonical unit
+  (Q); keep the existing Decimal(18,3) quantity limits. Use TypeScript BigInt for
+  all cost products, sums, division, and rounding. Do not convert intermediate
+  values to Number or depend on a Decimal library's default precision.
+- For nonnegative numerator N and positive denominator D, round-half-up means
+  floor(N / D) + (2 * (N mod D) >= D ? 1 : 0). Apply it only at the explicit
+  boundaries below. Reject negative values, invalid units/precision, and overflow
+  rather than clamping. Serialize scaled costs as decimal integer strings.
+- Retain the current maximum canonical unit cost of Rp2147483647, represented as
+  2147483647000000 micro-rupiah. Validate this bound before storage. BigInt
+  intermediates must handle products larger than PostgreSQL BIGINT without loss.
+  Transaction totals and final HPP amounts remain whole rupiah; preserve existing
+  32-bit transaction amount limits and reject HPP totals exceeding that limit.
+
+### Receiving and original purchase evidence
+
+- Accept original purchase quantity, supported purchase unit, and integer-rupiah
+  price per purchase unit. Normalize quantity and cost to the canonical unit on
+  the server: kg -> g and L -> ml use a factor of 1000, otherwise factor 1.
+  receivedCostMicros = purchaseUnitCostRupiah * 1000000 / factor. With these
+  allowed factors, this conversion is exact; no rounding is needed.
+- Preserve the original purchase quantity/unit, price and its unit basis, saved
+  normalized quantity/cost, and saved integer-rupiah line total in immutable
+  StockInItem records. Calculate purchase totals from the original purchase
+  terms, never WAC. Preserve 7C's rejection of fractional-rupiah purchase totals
+  and transaction overflow; WAC rounding does not change invoice amounts.
+- Existing 7C/7D requests and receipts use unitCost per canonical unit, independent
+  of inputUnit. Never reinterpret that value as a price per L/kg. Version the new
+  purchase-unit input contract and retain legacy retries/fingerprints and history
+  semantics, including unresolved sessionStorage requests across deployment.
+  Historical records cannot gain an invented original supplier price.
+- For existing quantity Qold, saved WAC Cold, received quantity Qin, and normalized
+  received cost Cin (both costs in micro-rupiah):
+
+  Cnew = roundHalfUp((Qold * Cold + Qin * Cin) / (Qold + Qin)).
+
+  Quantities in this formula use the same integer-thousandths scale, which cancels.
+  When Qold = 0, Cnew = Cin, including when the previous cost was null. For positive
+  stock with unknown WAC, reject receiving with a clear costing error until that
+  opening cost is resolved; never treat unknown stock as free or use latest price.
+- For each successful receipt, update Ingredient.currentStock and its WAC in the
+  SAME transaction as the immutable receipt, items, and PURCHASE movements.
+  Reuse the per-idempotency-key lock and check for replay before costing. An
+  identical retry returns the saved receipt without applying stock or WAC again;
+  different content/actor with the same key remains a conflict.
+- Acquire Ingredient FOR UPDATE locks in ingredient ID order. Read quantity and
+  WAC after acquiring each lock and hold all locks through commit. Distinct
+  concurrent receipts must each use the preceding committed balance and WAC.
+  A failure on any line or later write rolls back all quantities, costs, history,
+  and movements. Each ingredient in a receipt calculates WAC independently.
+- Keep the existing 1-100 distinct ingredients per receipt rule. Receiving the
+  same ingredient on successive receipts updates its same balance and WAC.
+  Costing follows serialized posting order, not a backdated receivedAt value;
+  backdating must not recalculate previously posted receipts.
+- Example: 5000 ml at Rp30/ml plus 12 L at Rp35000/L means Qin = 12000 ml,
+  Cin = Rp35/ml, original purchase total = Rp420000, stockAfter = 17000 ml,
+  and WAC = Rp33.529412/ml (stored integer 33529412).
+
+### Current recipe HPP
+
+- For each recipe ingredient, multiply its exact canonical quantity in
+  thousandths by the current WAC in micro-rupiah. The product is an exact integer
+  numerator with denominator 1000000000 for a rupiah amount.
+- Round each ingredient HPP contribution half-up to whole rupiah, then sum those
+  integer contributions to obtain recipe HPP. This deliberately makes the total
+  equal the sum of the displayed contributions; do not instead round only the
+  unrounded recipe sum. Read all ingredients from one consistent database
+  snapshot so a concurrent receipt cannot produce a mixture of old/new costs.
+- Example: 100 ml * Rp33.529412/ml = Rp3352.9412 -> Rp3353. Two contributions
+  of Rp0.50 each round to Rp1 each and produce Rp2 total under this policy.
+- If any referenced ingredient has unknown WAC, return HPP as unavailable and
+  identify the missing cost. Never silently substitute zero or latest purchase
+  price. Zero stock with known WAC can still provide an estimated current HPP.
+- Future WAC changes affect only current estimates. Existing Stock In records,
+  order/receipt data, and any historical HPP snapshots introduced later must
+  never be rewritten from current WAC.
+
+### Migration requirements
+
+- Existing Ingredient.unitCost is optional metadata and Stock In never maintained
+  it. Do not assume it is a valid WAC or blindly copy it as an opening valuation.
+- Reconstruct current WAC only where immutable receiving history proves a complete
+  balance from zero: verify quantities, units, PURCHASE movements, stockAfter
+  sequence, and final currentStock; replay the same rounding policy in that proven
+  posting sequence. Do not assume createdAt/receivedAt sorts concurrent receipts
+  into their actual posting order. Update only current ingredient costing state.
+- Positive balances with incomplete or inconsistent provenance require explicit
+  resolution before enabling WAC receiving; never invent an opening cost. Empty
+  ingredients may start with unknown WAC and acquire it on their first receipt.
+- Preserve old history rows and their cost basis, immutability protections, and
+  idempotency behavior. Add schema constraints for the new representation and
+  reconcile the legacy Ingredient.unitCost field without two cost authorities.
+
+### Required verification before 7E completion
+
+- Exact integer tests: first receipt, zero-cost receipt, additional receipts,
+  the 5000/12000 ml example, fractional canonical costs (Rp33333/L -> Rp33.333/ml),
+  fractional quantities, half-micro WAC ties, below/at/above Rp0.50 HPP ties,
+  per-contribution HPP rounding, repeated receipt rounding, and maximum-value
+  intermediate arithmetic beyond Number.MAX_SAFE_INTEGER and BIGINT products.
+- Validate incompatible units, excess quantity precision, negative costs,
+  fractional purchase totals, overflow, and positive-stock/unknown-WAC errors.
+- PostgreSQL tests: independent WAC for multiple ingredients, multiple recipes
+  sharing one ingredient, sequential receipts, concurrent distinct receipts on
+  overlapping ingredients in opposite input order, and concurrent identical
+  retries. Assert final stock AND WAC plus receipt/movement counts.
+- Inject failures after writes to prove rollback of stock AND WAC for every line.
+  Simulate lost responses and retry the exact key/payload; verify conflict handling
+  and legacy replay compatibility after migration.
+- Change WAC again and confirm saved purchase quantities, units, costs, amounts,
+  and unrelated historical POS data are unchanged. Verify HPP reads/recipe edits
+  never allocate or deduct stock, and retain all existing permission boundaries.
+- Test migration against complete, missing, and inconsistent legacy histories,
+  including concurrent posting order. Run relevant lint, TypeScript typecheck,
+  domain tests, and database integration tests before declaring implementation done.

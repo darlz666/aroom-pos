@@ -27,7 +27,8 @@ test("Stock In PostgreSQL transactions, supplier management and shared balances"
         { ingredientId: cup.id, quantity: "1000", unit: "pcs", unitCost: 200 }] });
     const stock = async (id: string) => (await db.ingredient.findUniqueOrThrow({ where: { id } })).currentStock.toFixed();
     const counts = async () => ({ receipts: await db.stockIn.count(), lines: await db.stockInItem.count(), movements: await db.stockMovement.count(),
-      stock: await Promise.all([oat.id, beans.id, cup.id].map(stock)) });
+      stock: await Promise.all([oat.id, beans.id, cup.id].map(stock)),
+      wac: await Promise.all([oat.id, beans.id, cup.id].map(async id => (await db.ingredient.findUniqueOrThrow({ where: { id } })).weightedAverageUnitCostMicros)) });
     let receiptId = "";
     const originalRequest = payload();
 
@@ -46,7 +47,7 @@ test("Stock In PostgreSQL transactions, supplier management and shared balances"
       const recipes = await db.recipeItem.findMany({ where: { ingredientId: oat.id }, include: { recipe: { include: { product: true } } } });
       assert.deepEqual(recipes.map(item => item.quantity.toNumber()).sort((a, b) => a - b), [100, 120, 150]);
       assert.ok(recipes.every(item => item.recipe.product.price === 22000 && item.recipe.product.available));
-      assert.equal((await db.ingredient.findUniqueOrThrow({ where: { id: oat.id } })).unitCost, null);
+      assert.equal((await db.ingredient.findUniqueOrThrow({ where: { id: oat.id } })).weightedAverageUnitCostMicros, BigInt(20_000_000));
       const movements = await db.stockMovement.findMany({ where: { sourceType: "StockIn", sourceId: receipt.id } });
       assert.equal(movements.length, 3);
       for (const movement of movements) {
@@ -106,7 +107,7 @@ test("Stock In PostgreSQL transactions, supplier management and shared balances"
             } });
           },
         }))) } as unknown as PrismaClient;
-        const request = payload(), before = await counts();
+        const request = { ...payload(), items: payload().items.map(item => ({ ...item, unitCost: item.unitCost + 1 })) }, before = await counts();
         await assert.rejects(createStockIn(broken, manager, request), /injected write failure/);
         assert.equal(writes, 2); assert.deepEqual(await counts(), before);
         assert.equal(await db.stockIn.count({ where: { idempotencyKey: request.idempotencyKey } }), 0);
@@ -170,7 +171,7 @@ test("Stock In PostgreSQL transactions, supplier management and shared balances"
         const row = rows.find(row => row.id === ingredient.id)!;
         assert.equal(row.currentStock, ingredient.currentStock.toFixed()); assert.equal(row.minimumStock, ingredient.minimumStock.toFixed());
         assert.equal(row.stockStatus, expected); assert.equal(row.active, ingredient.active);
-        assert.deepEqual(Object.keys(row).sort(), ["active", "baseUnit", "currentStock", "id", "minimumStock", "name", "stockStatus"]);
+        assert.deepEqual(Object.keys(row).sort(), ["active", "baseUnit", "currentStock", "id", "minimumStock", "name", "stockStatus", "weightedAverageUnitCostMicros"]);
       }
       assert.equal(rows.filter(row => row.id === oat.id).length, 1);
     });

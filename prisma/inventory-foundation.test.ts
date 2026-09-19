@@ -40,12 +40,12 @@ test("inventory PostgreSQL foundation (all fixtures rolled back)", async t => {
 
       await t.test("zero stock and unknown cost defaults; supplier metadata and active flags", async () => {
         assert.equal(oatmilk.currentStock.toString(), "0"); assert.equal(oatmilk.minimumStock.toString(), "1000");
-        assert.equal(oatmilk.baseUnit, "ml"); assert.equal(oatmilk.unitCost, null); assert.equal(oatmilk.active, true);
+        assert.equal(oatmilk.baseUnit, "ml"); assert.equal(oatmilk.weightedAverageUnitCostMicros, null); assert.equal(oatmilk.active, true);
         assert.equal(sugar.baseUnit, "g"); assert.equal(supplier.active, false); assert.equal(supplier.phone, null);
         const updated = await tx.supplier.update({ where: { id: supplier.id }, data: { active: true } });
         assert.equal(updated.active, true);
-        const cost = await tx.ingredient.update({ where: { id: oatmilk.id }, data: { unitCost: 25 } });
-        assert.equal(cost.unitCost, 25);
+        const cost = await tx.ingredient.update({ where: { id: oatmilk.id }, data: { weightedAverageUnitCostMicros: BigInt(25_000_000) } });
+        assert.equal(cost.weightedAverageUnitCostMicros, BigInt(25_000_000));
         assert.equal((await tx.product.findUniqueOrThrow({ where: { id: product.id } })).price, 22000);
       });
 
@@ -78,7 +78,8 @@ test("inventory PostgreSQL foundation (all fixtures rolled back)", async t => {
       await rejected("negative stock", () => tx.$executeRaw`UPDATE "Ingredient" SET "currentStock" = -1 WHERE id = ${oatmilk.id}::uuid`, "23514");
       await rejected("NaN stock", () => tx.$executeRaw`UPDATE "Ingredient" SET "currentStock" = 'NaN' WHERE id = ${oatmilk.id}::uuid`, "23514");
       await rejected("negative minimum", () => tx.$executeRaw`UPDATE "Ingredient" SET "minimumStock" = -1 WHERE id = ${oatmilk.id}::uuid`, "23514");
-      await rejected("negative cost", () => tx.$executeRaw`UPDATE "Ingredient" SET "unitCost" = -1 WHERE id = ${oatmilk.id}::uuid`, "23514");
+      await rejected("negative cost", () => tx.$executeRaw`UPDATE "Ingredient" SET "weightedAverageUnitCostMicros" = -1 WHERE id = ${oatmilk.id}::uuid`, "23514");
+      await rejected("legacy cost frozen", () => tx.ingredient.update({ where: { id: oatmilk.id }, data: { legacyUnitCost: 25 } }), "23514");
       await rejected("unknown unit", () => tx.$executeRaw`UPDATE "Ingredient" SET "baseUnit" = 'bottle' WHERE id = ${oatmilk.id}::uuid`, "22P02");
       await rejected("canonical base unit required at rest", () => tx.ingredient.create({ data: { name: randomUUID(), baseUnit: "L" } }), "23514");
       await rejected("base unit cannot reinterpret balances/cost/history", () => tx.$executeRaw`UPDATE "Ingredient" SET "baseUnit" = 'g' WHERE id = ${oatmilk.id}::uuid`, "23514");

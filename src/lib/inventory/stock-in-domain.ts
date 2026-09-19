@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Ingredient } from "../../generated/prisma/client";
 import { convertQuantity, ingredientUnitCost, InventoryError, inventoryId, inventoryObject, inventoryQuantity, inventoryUnit, optionalInventoryText } from "./domain";
+import { COST_SCALE, purchaseLineTotal } from "./costing";
 
 function receivedInstant(value: unknown): Date {
   // Require an explicit offset: tablet/server timezone must never reinterpret dates.
@@ -20,13 +21,17 @@ export function stockInInput(input: unknown) {
   if (!Array.isArray(raw.items) || raw.items.length < 1 || raw.items.length > 100) throw new InventoryError("INVALID_INPUT");
   const seen = new Set<string>();
   const items = raw.items.map(value => {
-    const item = inventoryObject(value, ["ingredientId", "quantity", "unit", "unitCost"]);
+    const item = inventoryObject(value, ["ingredientId", "quantity", "unit", "unitCost", "purchaseUnitCost"]);
     const ingredientId = inventoryId(item.ingredientId);
     if (seen.has(ingredientId)) throw new InventoryError("DUPLICATE_INGREDIENT");
     seen.add(ingredientId);
-    const unitCost = ingredientUnitCost(item.unitCost);
-    if (unitCost === null) throw new InventoryError("INVALID_COST");
-    return { ingredientId, quantity: inventoryQuantity(item.quantity, true), unit: inventoryUnit(item.unit), unitCost };
+    // Mutually exclusive contracts: legacy canonical-unit cost or purchase-unit v1.
+    if (("unitCost" in item) === ("purchaseUnitCost" in item)) throw new InventoryError("INVALID_COST");
+    const price = ingredientUnitCost("purchaseUnitCost" in item ? item.purchaseUnitCost : item.unitCost);
+    if (price === null) throw new InventoryError("INVALID_COST");
+    const common = { ingredientId, quantity: inventoryQuantity(item.quantity, true), unit: inventoryUnit(item.unit) };
+    // Preserve legacy property order/shape, hence persisted request fingerprints.
+    return "purchaseUnitCost" in item ? { ...common, purchaseUnitCost: price } : { ...common, unitCost: price };
   }).sort((a, b) => a.ingredientId.localeCompare(b.ingredientId));
   return { idempotencyKey, supplierId, receivedAt, notes, items };
 }
@@ -43,9 +48,13 @@ export function stockInLine(item: ReturnType<typeof stockInInput>["items"][numbe
   if (ingredient.id !== item.ingredientId) throw new InventoryError("INGREDIENT_NOT_FOUND");
   if (!ingredient.active) throw new InventoryError("INGREDIENT_INACTIVE");
   const baseQuantity = convertQuantity(item.quantity.toFixed(), item.unit, ingredient.baseUnit);
-  const scaledCost = BigInt(baseQuantity.toFixed(3).replace(".", "")) * BigInt(item.unitCost);
-  if (scaledCost % BigInt(1000) !== BigInt(0) || scaledCost / BigInt(1000) > BigInt(2_147_483_647)) throw new InventoryError("INVALID_COST");
+  const factor = item.unit === "kg" || item.unit === "L" ? BigInt(1000) : BigInt(1);
+  const purchaseUnitCost = "purchaseUnitCost" in item ? item.purchaseUnitCost : null;
+  const unitCost = "unitCost" in item ? item.unitCost : null;
+  const receivedUnitCostMicros = purchaseUnitCost !== null
+    ? BigInt(purchaseUnitCost) * COST_SCALE / factor : BigInt(unitCost!) * COST_SCALE;
   return { ingredientId: ingredient.id, ingredientNameSnapshot: ingredient.name,
     inputQuantity: item.quantity, inputUnit: item.unit, baseQuantity, baseUnit: ingredient.baseUnit,
-    unitCost: item.unitCost, lineTotal: Number(scaledCost / BigInt(1000)) };
+    unitCost, purchaseUnitCost,
+    receivedUnitCostMicros, lineTotal: purchaseLineTotal(baseQuantity.toFixed(), receivedUnitCostMicros) };
 }

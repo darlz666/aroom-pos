@@ -39,7 +39,7 @@ const ingredientResult = { success: true, ingredients: [oat, { ...oat, id: rando
   { ...oat, id: randomUUID(), name: "Cups", baseUnit: "pcs", currentStock: "0.001", minimumStock: "0.002", stockStatus: "LOW" }] };
 const supplierResult = { success: true, suppliers: [supplier, { ...supplier, id: randomUUID(), name: "Inactive", active: false }] };
 const saved = { id: randomUUID(), referenceNumber: "SI-receipt", supplierName: "Greenfields", receivedAt: "2026-09-18T01:00:00Z", createdAt: "2026-09-18T02:00:00Z", actorName: "Stock staff", total: 240000, notes: "Morning",
-  items: [{ id: randomUUID(), ingredientId: oat.id, ingredientName: "Oatmilk", inputQuantity: "12", inputUnit: "L", baseQuantity: "12000", baseUnit: "ml", unitCost: 20, lineTotal: 240000 }] };
+  items: [{ id: randomUUID(), ingredientId: oat.id, ingredientName: "Oatmilk", inputQuantity: "12", inputUnit: "L", baseQuantity: "12000", baseUnit: "ml", unitCost: 20, purchaseUnitCost: null, receivedUnitCostMicros: "20000000", lineTotal: 240000 }] };
 const row = { id: saved.id, referenceNumber: saved.referenceNumber, supplierName: "Greenfields", receivedAt: saved.receivedAt, createdAt: saved.createdAt, actorName: "Stock staff", itemCount: 1, total: 240000 };
 const history = { success: true, entries: [row], nextCursor: null };
 const unavailable = { success: false, code: "UNAVAILABLE", error: "Unavailable" };

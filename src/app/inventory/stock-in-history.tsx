@@ -61,7 +61,7 @@ export function StockInHistory({ initial }: { initial?: HistoryResult }) {
               <p>Diterima: {dateTime(detail.receivedAt)} WIB</p><p>Dicatat: {dateTime(detail.createdAt)} WIB</p><p>Oleh: {detail.actorName}</p><p className="whitespace-pre-wrap break-words">{detail.notes}</p></div>
             {detail.items.map(item => <article key={item.id} className="border-t border-[#dedfd5] pt-4"><h4 className="break-words text-lg font-semibold">{item.ingredientName}</h4>
               <p>{quantity(item.inputQuantity)} {item.inputUnit} → {quantity(item.baseQuantity)} {item.baseUnit}</p>
-              <p>{rupiah(item.unitCost)} / {item.baseUnit}</p><p className="text-lg font-semibold">{rupiah(item.lineTotal)}</p></article>)}
+              <p>{rupiah(item.purchaseUnitCost ?? item.unitCost!)} / {item.purchaseUnitCost !== null ? item.inputUnit : item.baseUnit}</p><p className="text-lg font-semibold">{rupiah(item.lineTotal)}</p></article>)}
             <p className="border-t border-[#dedfd5] pt-4 text-2xl font-semibold">Total {rupiah(detail.total)}</p>
           </div>}
         </section>}

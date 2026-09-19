@@ -227,9 +227,10 @@ model Ingredient {
   currentStock Decimal         @default(0) @db.Decimal(18, 3)
   minimumStock Decimal         @default(0) @db.Decimal(18, 3)
   active       Boolean         @default(true)
-  // Optional integer rupiah per ONE canonical base unit. Null means unknown.
-  // No HPP or costing calculations yet.
-  unitCost     Int?
+  // Preserved pre-7E metadata, frozen by SQL; never a costing authority.
+  legacyUnitCost Int?
+  // The sole current cost: integer millionths of rupiah per canonical unit.
+  weightedAverageUnitCostMicros BigInt?
   createdAt    DateTime        @default(now()) @db.Timestamptz(3)
   updatedAt    DateTime        @updatedAt @db.Timestamptz(3)
   recipeItems  RecipeItem[]
@@ -282,7 +283,11 @@ model StockInItem {
   baseQuantity           Decimal       @db.Decimal(18, 3)
   baseUnit               InventoryUnit
   // Integer rupiah per ONE canonical base unit, independent of inputUnit.
-  unitCost               Int
+  unitCost               Int?
+  // New input contract: original whole-rupiah price per inputUnit.
+  purchaseUnitCost       Int?
+  // Immutable normalized receiving cost; null only on pre-7E history.
+  receivedUnitCostMicros BigInt?
   lineTotal              Int
   stockIn                StockIn       @relation(fields: [stockInId], references: [id], onDelete: Restrict)
   ingredient             Ingredient    @relation(fields: [ingredientId, baseUnit], references: [id, baseUnit], onDelete: Restrict, onUpdate: Restrict)

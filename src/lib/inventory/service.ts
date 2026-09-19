@@ -4,6 +4,7 @@ import { Prisma, type PrismaClient, type Supplier } from "../../generated/prisma
 import type { AuthenticatedUser } from "../auth/credentials";
 import { InventoryError, inventoryId, inventoryObject, inventoryQuantity, supplierInput } from "./domain";
 import { stockInFingerprint, stockInInput, stockInLine } from "./stock-in-domain";
+import { ingredientHpp, rupiahAmount, weightedAverageCost } from "./costing";
 
 type InventoryActor = Pick<AuthenticatedUser, "id" | "role">;
 function authorized<T>(db: PrismaClient, actor: InventoryActor, work: (tx: Prisma.TransactionClient) => Promise<T>) {
@@ -60,7 +61,8 @@ function stockInDto(receipt: Prisma.StockInGetPayload<{ include: typeof stockInI
     receivedAt: receipt.receivedAt.toISOString(), createdAt: receipt.createdAt.toISOString(),
     items: receipt.items.map(item => ({ id: item.id, ingredientId: item.ingredientId, ingredientName: item.ingredientNameSnapshot,
       inputQuantity: item.inputQuantity.toFixed(), inputUnit: item.inputUnit, baseQuantity: item.baseQuantity.toFixed(), baseUnit: item.baseUnit,
-      unitCost: item.unitCost, lineTotal: item.lineTotal })),
+      unitCost: item.unitCost, purchaseUnitCost: item.purchaseUnitCost,
+      receivedUnitCostMicros: item.receivedUnitCostMicros?.toString() ?? null, lineTotal: item.lineTotal })),
   };
 }
 
@@ -89,7 +91,9 @@ export async function createStockIn(db: PrismaClient, actor: InventoryActor, inp
       if (!ingredient) throw new InventoryError("INGREDIENT_NOT_FOUND");
       const line = stockInLine(item, ingredient);
       const stockAfter = inventoryQuantity(ingredient.currentStock.plus(line.baseQuantity).toFixed());
-      lines.push({ line, stockAfter });
+      const weightedAverageUnitCostMicros = weightedAverageCost(ingredient.currentStock.toFixed(),
+        ingredient.weightedAverageUnitCostMicros, line.baseQuantity.toFixed(), line.receivedUnitCostMicros);
+      lines.push({ line, stockAfter, weightedAverageUnitCostMicros });
     }
     const id = randomUUID();
     const receipt = await tx.stockIn.create({ data: { id, referenceNumber: `SI-${id}`, idempotencyKey: request.idempotencyKey,
@@ -97,12 +101,39 @@ export async function createStockIn(db: PrismaClient, actor: InventoryActor, inp
       receivedAt: request.receivedAt, actorId: actor.id, notes: request.notes,
       items: { create: lines.map(({ line }) => line) },
     }, include: stockInInclude });
-    for (const { line, stockAfter } of lines) {
+    for (const { line, stockAfter, weightedAverageUnitCostMicros } of lines) {
       await tx.stockMovement.create({ data: { ingredientId: line.ingredientId, type: "PURCHASE", quantity: line.baseQuantity,
         unit: line.baseUnit, stockAfter, sourceType: "StockIn", sourceId: id, actorId: actor.id } });
-      await tx.ingredient.update({ where: { id: line.ingredientId }, data: { currentStock: stockAfter } });
+      await tx.ingredient.update({ where: { id: line.ingredientId }, data: { currentStock: stockAfter, weightedAverageUnitCostMicros } });
     }
     return { ...stockInDto(receipt), replayed: false };
+  });
+}
+
+/** One SQL statement gives recipe quantities and all current costs one snapshot. */
+export async function getRecipeHpp(db: PrismaClient, actor: InventoryActor, productId: unknown) {
+  return authorized(db, actor, async tx => {
+    const id = inventoryId(productId);
+    const rows = await tx.$queryRaw<{
+      recipeId: string | null; ingredientId: string | null; name: string | null;
+      quantity: Prisma.Decimal | null; unit: string | null; cost: bigint | null;
+    }[]>`SELECT r.id AS "recipeId", i.id AS "ingredientId", i.name,
+      ri.quantity, ri.unit::text AS unit, i."weightedAverageUnitCostMicros" AS cost
+      FROM "Product" p LEFT JOIN "Recipe" r ON r."productId" = p.id
+      LEFT JOIN "RecipeItem" ri ON ri."recipeId" = r.id
+      LEFT JOIN "Ingredient" i ON i.id = ri."ingredientId"
+      WHERE p.id = ${id}::uuid ORDER BY i.id`;
+    if (!rows.length) throw new InventoryError("PRODUCT_NOT_FOUND");
+    if (!rows[0].recipeId) throw new InventoryError("RECIPE_NOT_FOUND");
+    const items = rows.filter(row => row.ingredientId !== null).map(row => ({
+      ingredientId: row.ingredientId!, ingredientName: row.name!, quantity: row.quantity!.toFixed(), unit: row.unit!,
+      weightedAverageUnitCostMicros: row.cost?.toString() ?? null,
+      hpp: row.cost === null ? null : ingredientHpp(row.quantity!.toFixed(), row.cost),
+    }));
+    const missingCostIngredientIds = items.filter(item => item.hpp === null).map(item => item.ingredientId);
+    const available = items.length > 0 && missingCostIngredientIds.length === 0;
+    return { productId: id, recipeId: rows[0].recipeId, available, items, missingCostIngredientIds,
+      total: available ? rupiahAmount(items.reduce((sum, item) => sum + BigInt(item.hpp!), BigInt(0))) : null };
   });
 }
 
@@ -119,8 +150,9 @@ export async function getStockIn(db: PrismaClient, actor: InventoryActor, stockI
 export async function listIngredients(db: PrismaClient, actor: InventoryActor) {
   return authorized(db, actor, async tx => (await tx.ingredient.findMany({
     orderBy: [{ name: "asc" }, { id: "asc" }],
-    select: { id: true, name: true, baseUnit: true, currentStock: true, minimumStock: true, active: true },
+    select: { id: true, name: true, baseUnit: true, currentStock: true, minimumStock: true, active: true, weightedAverageUnitCostMicros: true },
   })).map(row => ({ ...row, currentStock: row.currentStock.toFixed(), minimumStock: row.minimumStock.toFixed(),
+    weightedAverageUnitCostMicros: row.weightedAverageUnitCostMicros?.toString() ?? null,
     stockStatus: row.currentStock.isZero() ? "EMPTY" as const : row.currentStock.lte(row.minimumStock) ? "LOW" as const : "AVAILABLE" as const,
   })));
 }
