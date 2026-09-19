@@ -20,7 +20,7 @@ export default async function Home() {
     return <main lang="id" className="flex flex-1 flex-col items-center justify-center gap-6 bg-[#f6f4ef] p-8 text-center text-[#292e28]">
       <h1 className="text-3xl font-semibold">Finance</h1>
       <p className="text-lg">{user.name}</p>
-      <p>Akun Anda aktif. Modul ini belum tersedia.</p>
+      <Link href="/recipes" className="inline-flex min-h-14 items-center rounded-lg border border-[#a8aea0] px-6 py-3 font-semibold">Lihat resep &amp; HPP</Link>
       <form action={logout}><button type="submit" className="min-h-14 rounded-lg border border-[#a8aea0] px-6 py-3 font-semibold">Logout</button></form>
     </main>;
   }

@@ -97,7 +97,7 @@ test("inventory route guards before any data read; stock role gets only inventor
     const tree = await page.default();
     assert.match(text(tree), /Stock Management.*Staff.*Logout/);
     const links = elements(tree).filter(e => e.props.href).map(e => e.props.href);
-    assert.deepEqual(links, role === "ADMIN" ? ["/admin"] : []);
+    assert.deepEqual(links, role === "ADMIN" ? ["/recipes", "/admin"] : ["/recipes"]);
     assert.doesNotMatch(JSON.stringify(tree), /passwordHash|secret/);
   }
 });

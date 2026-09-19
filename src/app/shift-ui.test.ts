@@ -59,9 +59,9 @@ test("root authenticates first and renders only permitted state and staff fields
   for (role of ["FINANCE"]) {
     const landing = await page.default();
     assert.equal(reads, 0);
-    assert.match(text(landing), /Modul ini belum tersedia/);
+    assert.match(text(landing), /Lihat resep & HPP/);
     assert.match(text(landing), /Logout/);
-    assert.equal(elements(landing).some(e => e.props.href), false);
+    assert.deepEqual(elements(landing).filter(e => e.props.href).map(e => e.props.href), ["/recipes"]);
     assert.ok(!elements(landing).some(e => e.type === OpenShiftForm || e.type === CloseShiftForm));
     assert.doesNotMatch(JSON.stringify(landing), /private-/);
   }

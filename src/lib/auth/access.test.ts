@@ -16,6 +16,7 @@ test("every action rejects restricted roles and revoked sessions before service/
     paths.forEach((path, i) => { require.cache[path] = { id: path, filename: path, loaded: true, exports: mocks[i] } as NodeJS.Module; });
     const users = await import("../users/actions");
     const inventory = await import("../inventory/actions");
+    const recipes = await import("../inventory/recipe-actions");
     const orders = await import("../orders/actions");
     const shifts = await import("../shifts/actions");
     const { closeShiftAction } = await import("../shifts/close-action");
@@ -34,9 +35,11 @@ test("every action rejects restricted roles and revoked sessions before service/
     const inventoryCalls = [() => inventory.listSuppliersAction(), () => inventory.createSupplierAction({}),
       () => inventory.updateSupplierAction({}), () => inventory.createStockInAction({}), () => inventory.getStockInAction(randomUUID()),
       () => inventory.listIngredientsAction(), () => inventory.listStockInsAction({})];
+    const recipeReads = [() => recipes.listRecipeOptionsAction(), () => recipes.getRecipeAction(randomUUID()), () => inventory.getRecipeHppAction(randomUUID())];
     for (const role of ["CASHIER", "STOCK_MANAGEMENT", "FINANCE", null] as const) {
       user = role ? { id: randomUUID(), name: "Staff", loginIdentifier: "staff", role } : null;
-      for (const call of [...adminCalls, ...(role !== "CASHIER" ? operationalCalls : []), ...(role !== "STOCK_MANAGEMENT" ? inventoryCalls : [])]) {
+      for (const call of [...adminCalls, ...(role !== "CASHIER" ? operationalCalls : []), ...(role !== "STOCK_MANAGEMENT" ? [...inventoryCalls, () => recipes.saveRecipeAction({})] : []),
+        ...(role === "CASHIER" || role === null ? recipeReads : [])]) {
         await assert.rejects(call(), (error: unknown) => {
           assert.equal((error as { digest: string }).digest, `NEXT_REDIRECT;replace;${role ? "/" : "/login"};307;`);
           return true;

@@ -18,7 +18,8 @@ test("inventory actions authenticate, pass only session actor and return safe un
   };
   try {
     const navigation = require("next/dist/client/components/navigation.react-server");
-    const mocks = [{ requireInventoryManager: async () => { if (denied) navigation.redirect("/login"); return actor; } }, { prisma: db },
+    const guard = async () => { if (denied) navigation.redirect("/login"); return actor; };
+    const mocks = [{ requireInventoryManager: guard, requireRecipeReader: guard }, { prisma: db },
       { listSuppliers: service(true), listIngredients: service(true), listStockIns: service(), createSupplier: service(), updateSupplier: service(), createStockIn: service(), getStockIn: service(), getRecipeHpp: service() }, navigation];
     paths.forEach((path, i) => { require.cache[path] = { id: path, filename: path, loaded: true, exports: mocks[i] } as NodeJS.Module; });
     const actions = await import("./actions");

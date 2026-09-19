@@ -5,6 +5,7 @@ import type { AuthenticatedUser } from "../auth/credentials";
 import { InventoryError, inventoryId, inventoryObject, inventoryQuantity, supplierInput } from "./domain";
 import { stockInFingerprint, stockInInput, stockInLine } from "./stock-in-domain";
 import { ingredientHpp, rupiahAmount, weightedAverageCost } from "./costing";
+import { withRecipeAccess } from "./recipe-authorization";
 
 type InventoryActor = Pick<AuthenticatedUser, "id" | "role">;
 function authorized<T>(db: PrismaClient, actor: InventoryActor, work: (tx: Prisma.TransactionClient) => Promise<T>) {
@@ -112,29 +113,58 @@ export async function createStockIn(db: PrismaClient, actor: InventoryActor, inp
 
 /** One SQL statement gives recipe quantities and all current costs one snapshot. */
 export async function getRecipeHpp(db: PrismaClient, actor: InventoryActor, productId: unknown) {
-  return authorized(db, actor, async tx => {
-    const id = inventoryId(productId);
+  return withRecipeAccess(db, actor, false, async tx => {
+    const result = await readRecipe(tx, inventoryId(productId));
+    if (!result.recipeId) throw new InventoryError("RECIPE_NOT_FOUND");
+    if (result.costError) throw new InventoryError(result.costError);
+    return result;
+  });
+}
+
+/** Recipe definition and WAC share the same statement snapshot, even while
+ * receiving or another recipe edit commits. Also supports products without recipes. */
+export async function readRecipe(tx: Prisma.TransactionClient, id: string) {
     const rows = await tx.$queryRaw<{
       recipeId: string | null; ingredientId: string | null; name: string | null;
       quantity: Prisma.Decimal | null; unit: string | null; cost: bigint | null;
-    }[]>`SELECT r.id AS "recipeId", i.id AS "ingredientId", i.name,
+      revision: number | null; ingredientActive: boolean | null;
+      productName: string; productActive: boolean; productAvailable: boolean;
+    }[]>`SELECT r.id AS "recipeId", r.revision, i.id AS "ingredientId", i.name,
+      i.active AS "ingredientActive", p.name AS "productName", p.active AS "productActive", p.available AS "productAvailable",
       ri.quantity, ri.unit::text AS unit, i."weightedAverageUnitCostMicros" AS cost
       FROM "Product" p LEFT JOIN "Recipe" r ON r."productId" = p.id
       LEFT JOIN "RecipeItem" ri ON ri."recipeId" = r.id
       LEFT JOIN "Ingredient" i ON i.id = ri."ingredientId"
       WHERE p.id = ${id}::uuid ORDER BY i.id`;
     if (!rows.length) throw new InventoryError("PRODUCT_NOT_FOUND");
-    if (!rows[0].recipeId) throw new InventoryError("RECIPE_NOT_FOUND");
+    let costError: "INVALID_COST" | null = null;
+    const contribution = (row: typeof rows[number]) => {
+      if (row.cost === null) return null;
+      try { return ingredientHpp(row.quantity!.toFixed(), row.cost); }
+      catch (error) {
+        if (!(error instanceof InventoryError) || error.code !== "INVALID_COST") throw error;
+        costError = "INVALID_COST"; return null;
+      }
+    };
     const items = rows.filter(row => row.ingredientId !== null).map(row => ({
       ingredientId: row.ingredientId!, ingredientName: row.name!, quantity: row.quantity!.toFixed(), unit: row.unit!,
+      active: row.ingredientActive!,
       weightedAverageUnitCostMicros: row.cost?.toString() ?? null,
-      hpp: row.cost === null ? null : ingredientHpp(row.quantity!.toFixed(), row.cost),
+      hpp: contribution(row),
     }));
-    const missingCostIngredientIds = items.filter(item => item.hpp === null).map(item => item.ingredientId);
-    const available = items.length > 0 && missingCostIngredientIds.length === 0;
+    const missingCostIngredientIds = items.filter(item => item.weightedAverageUnitCostMicros === null).map(item => item.ingredientId);
+    let total: number | null = null;
+    if (items.length > 0 && missingCostIngredientIds.length === 0 && !costError) {
+      try { total = rupiahAmount(items.reduce((sum, item) => sum + BigInt(item.hpp!), BigInt(0))); }
+      catch (error) {
+        if (!(error instanceof InventoryError) || error.code !== "INVALID_COST") throw error;
+        costError = "INVALID_COST";
+      }
+    }
+    const available = total !== null;
     return { productId: id, recipeId: rows[0].recipeId, available, items, missingCostIngredientIds,
-      total: available ? rupiahAmount(items.reduce((sum, item) => sum + BigInt(item.hpp!), BigInt(0))) : null };
-  });
+      revision: rows[0].revision, productName: rows[0].productName, productActive: rows[0].productActive, productAvailable: rows[0].productAvailable,
+      total, costError };
 }
 
 export async function getStockIn(db: PrismaClient, actor: InventoryActor, stockInId: unknown) {

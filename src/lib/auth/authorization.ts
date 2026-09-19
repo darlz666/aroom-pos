@@ -30,3 +30,10 @@ export async function requireInventoryManager(): Promise<AuthenticatedUser> {
   if (user.role !== "ADMIN" && user.role !== "STOCK_MANAGEMENT") redirect("/");
   return user;
 }
+
+// Recipe costing is a separate permission: Finance cannot read inventory screens.
+export async function requireRecipeReader(): Promise<AuthenticatedUser> {
+  const user = await requireUser();
+  if (!["ADMIN", "STOCK_MANAGEMENT", "FINANCE"].includes(user.role)) redirect("/");
+  return user;
+}

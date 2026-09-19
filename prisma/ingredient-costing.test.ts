@@ -125,11 +125,14 @@ test("WAC receiving and current HPP PostgreSQL behavior", async t => {
     });
 
     await t.test("server permissions reload roles and active status for HPP", async () => {
-      for (const role of ["CASHIER", "FINANCE"] as const) {
+      for (const role of ["CASHIER"] as const) {
         const denied = await db.user.create({ data: { name: role, loginIdentifier: randomUUID(), passwordHash: "unused", role } });
         await assert.rejects(getRecipeHpp(db, denied, products[0].id), { code: "FORBIDDEN" });
         await assert.rejects(getRecipeHpp(db, { ...denied, role: "ADMIN" }, products[0].id), { code: "FORBIDDEN" });
       }
+      const finance = await db.user.create({ data: { name: "Finance", loginIdentifier: randomUUID(), passwordHash: "unused", role: "FINANCE" } });
+      assert.equal((await getRecipeHpp(db, finance, products[1].id)).available, true);
+      await assert.rejects(listIngredients(db, finance), { code: "FORBIDDEN" });
       await db.user.update({ where: { id: actor.id }, data: { active: false } });
       await assert.rejects(getRecipeHpp(db, actor, products[0].id), { code: "FORBIDDEN" });
       await db.user.update({ where: { id: actor.id }, data: { active: true, role: "ADMIN" } });

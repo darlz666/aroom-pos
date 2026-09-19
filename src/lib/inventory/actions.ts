@@ -1,7 +1,7 @@
 "use server";
 
 import { unstable_rethrow } from "next/navigation";
-import { requireInventoryManager } from "../auth/authorization";
+import { requireInventoryManager, requireRecipeReader } from "../auth/authorization";
 import { prisma } from "../db";
 import { InventoryError } from "./domain";
 import { createStockIn, createSupplier, getRecipeHpp, getStockIn, listIngredients, listStockIns, listSuppliers, updateSupplier } from "./service";
@@ -37,7 +37,7 @@ export async function getStockInAction(stockInId: unknown) {
 }
 
 export async function getRecipeHppAction(productId: unknown) {
-  try { return { success: true, hpp: await getRecipeHpp(prisma, await requireInventoryManager(), productId) } as const; }
+  try { return { success: true, hpp: await getRecipeHpp(prisma, await requireRecipeReader(), productId) } as const; }
   catch (error) { return failure(error); }
 }
 
