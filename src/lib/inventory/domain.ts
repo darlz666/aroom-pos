@@ -65,7 +65,7 @@ export function convertQuantity(value: unknown, from: unknown, to: unknown): Pri
   return inventoryQuantity(result.toFixed());
 }
 
-function name(value: unknown): string {
+export function name(value: unknown): string {
   if (typeof value !== "string" || !value.trim() || value.length > 128) throw new InventoryError("INVALID_INPUT");
   return value.trim();
 }
