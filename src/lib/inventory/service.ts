@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { Prisma, type PrismaClient, type Supplier } from "../../generated/prisma/client";
 import type { AuthenticatedUser } from "../auth/credentials";
 import { InventoryError, inventoryId, inventoryObject, inventoryQuantity, supplierInput } from "./domain";
+import { ingredientMasterInput, ingredientUpdateInput } from "./ingredient-domain";
 import { stockInFingerprint, stockInInput, stockInLine } from "./stock-in-domain";
 import { ingredientHpp, rupiahAmount, weightedAverageCost } from "./costing";
 import { withRecipeAccess } from "./recipe-authorization";
@@ -178,13 +179,108 @@ export async function getStockIn(db: PrismaClient, actor: InventoryActor, stockI
 
 /** Status uses exact stored decimals. Inactive is a separate metadata flag. */
 export async function listIngredients(db: PrismaClient, actor: InventoryActor) {
-  return authorized(db, actor, async tx => (await tx.ingredient.findMany({
-    orderBy: [{ name: "asc" }, { id: "asc" }],
-    select: { id: true, name: true, baseUnit: true, currentStock: true, minimumStock: true, active: true, weightedAverageUnitCostMicros: true },
-  })).map(row => ({ ...row, currentStock: row.currentStock.toFixed(), minimumStock: row.minimumStock.toFixed(),
-    weightedAverageUnitCostMicros: row.weightedAverageUnitCostMicros?.toString() ?? null,
-    stockStatus: row.currentStock.isZero() ? "EMPTY" as const : row.currentStock.lte(row.minimumStock) ? "LOW" as const : "AVAILABLE" as const,
-  })));
+  return authorized(db, actor, async tx => 
+    (await tx.ingredient.findMany({
+      orderBy: [{ name: "asc" }, { id: "asc" }],
+      select: {
+        id: true,
+        name: true,
+        baseUnit: true,
+        currentStock: true,
+        minimumStock: true,
+        active: true,
+        weightedAverageUnitCostMicros: true,
+      },
+    })).map(row => ({
+      ...row,
+      currentStock: row.currentStock.toFixed(),
+      minimumStock: row.minimumStock.toFixed(),
+      weightedAverageUnitCostMicros:
+        row.weightedAverageUnitCostMicros?.toString() ?? null,
+      stockStatus:
+        row.currentStock.isZero()
+          ? "EMPTY" as const
+          : row.currentStock.lte(row.minimumStock)
+            ? "LOW" as const
+            : "AVAILABLE" as const,
+    }))
+  );
+}
+
+export async function createIngredient(
+  db: PrismaClient,
+  actor: InventoryActor,
+  input: unknown
+) {
+  return authorized(db, actor, async tx => {
+    const data = ingredientMasterInput(input);
+
+    const existing = await tx.ingredient.findFirst({
+      where: {
+        name: {
+          equals: data.name,
+          mode: "insensitive",
+        },
+      },
+    });
+
+    if (existing) throw new InventoryError("DUPLICATE_INGREDIENT");
+
+    const ingredient = await tx.ingredient.create({
+      data: {
+        name: data.name,
+        baseUnit: "pcs",
+        active: true,        
+      },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        actorId: actor.id,
+        action: "INGREDIENT_CREATED",
+        entityType: "Ingredient",
+        entityId: ingredient.id,
+        details: {
+          name: ingredient.name,
+        },
+      },
+    });
+
+    return ingredient;
+  });
+}
+
+export async function updateIngredient(
+  db: PrismaClient,
+  actor: InventoryActor,
+  input: unknown
+) {
+  return authorized(db, actor, async tx => {
+    const data = ingredientUpdateInput(input);
+
+    const ingredient = await tx.ingredient.update({
+      where: {
+        id: inventoryId(data.id),
+      },
+      data: {
+        name: data.name,
+      },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        actorId: actor.id,
+        action: "INGREDIENT_UPDATED",
+        entityType: "Ingredient",
+        entityId: ingredient.id,
+        details: {
+          name: ingredient.name,
+        },
+      },
+    });
+
+    return ingredient;
+  });
 }
 
 export async function listStockIns(db: PrismaClient, actor: InventoryActor, input: unknown = {}) {
