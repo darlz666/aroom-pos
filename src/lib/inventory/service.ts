@@ -229,8 +229,8 @@ export async function createIngredient(
     const ingredient = await tx.ingredient.create({
       data: {
         name: data.name,
-        baseUnit: "pcs",
-        active: true,        
+        baseUnit: data.baseUnit,
+        active: true,
       },
     });
 
@@ -264,6 +264,7 @@ export async function updateIngredient(
       },
       data: {
         name: data.name,
+        active: data.active,
       },
     });
 

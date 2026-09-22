@@ -4,7 +4,18 @@ import { unstable_rethrow } from "next/navigation";
 import { requireInventoryManager, requireRecipeReader } from "../auth/authorization";
 import { prisma } from "../db";
 import { InventoryError } from "./domain";
-import { createStockIn, createSupplier, getRecipeHpp, getStockIn, listIngredients, listStockIns, listSuppliers, updateSupplier } from "./service";
+import {
+  createIngredient,
+  updateIngredient,
+  createStockIn,
+  createSupplier,
+  getRecipeHpp,
+  getStockIn,
+  listIngredients,
+  listStockIns,
+  listSuppliers,
+  updateSupplier
+} from "./service";
 
 function failure(error: unknown) {
   unstable_rethrow(error);
@@ -45,6 +56,39 @@ export async function listIngredientsAction() {
   try { return { success: true, ingredients: await listIngredients(prisma, await requireInventoryManager()) } as const; }
   catch (error) { return failure(error); }
 }
+
+export async function createIngredientAction(input: unknown) {
+  try {
+    return {
+      success: true,
+      ingredient: await createIngredient(
+        prisma,
+        await requireInventoryManager(),
+        input
+      )
+    } as const;
+  }
+  catch (error) {
+    return failure(error);
+  }
+}
+
+export async function updateIngredientAction(input: unknown) {
+  try {
+    return {
+      success: true,
+      ingredient: await updateIngredient(
+        prisma,
+        await requireInventoryManager(),
+        input
+      )
+    } as const;
+  }
+  catch (error) {
+    return failure(error);
+  }
+}
+
 export async function listStockInsAction(input: unknown = {}) {
   try { return { success: true, ...await listStockIns(prisma, await requireInventoryManager(), input) } as const; }
   catch (error) { return failure(error); }
