@@ -18,6 +18,7 @@ import {
 } from "./service";
 
 function failure(error: unknown) {
+  console.error("INVENTORY ERROR:", error);
   unstable_rethrow(error);
   const code = error instanceof InventoryError ? error.code : "UNAVAILABLE";
   return { success: false, code, error: code === "UNAVAILABLE"
