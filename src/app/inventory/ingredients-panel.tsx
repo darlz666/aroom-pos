@@ -132,18 +132,18 @@ export function IngredientsPanel({
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {result.ingredients.map(ingredient => (
-            <article key={ingredient.id} className={card}>
-              <h3 className="text-xl font-semibold">
-                {ingredient.name}
-              </h3>
+           <article key={ingredient.id} className={card}>
+                <h3 className="text-xl font-semibold">
+                    {ingredient.name}
+                </h3>
 
-              <p>
-                Satuan: {ingredient.baseUnit}
-              </p>
+                <p>
+                    Stok: {ingredient.currentStock}
+                </p>
 
-              <p>
-                Status: {ingredient.active ? "Aktif" : "Nonaktif"}
-              </p>
+                <p>
+                    Status: {Number(ingredient.currentStock) > 0 ? "Aktif" : "Kosong"}
+                </p>
             </article>
           ))}
         </div>
