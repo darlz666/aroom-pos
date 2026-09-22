@@ -111,7 +111,15 @@ export function StockInForm({ actorId, ingredients, suppliers, loading, reload, 
             changeLine(index, { ingredientId: e.target.value, unit: selected?.baseUnit ?? "pcs" });
           }}><option value="">Pilih bahan</option>{available.map(row => <option key={row.id} value={row.id} disabled={lines.some((other, i) => i !== index && other.ingredientId === row.id)}>{row.name} ({row.baseUnit})</option>)}</select></label>
           <label className="grid gap-2">Jumlah<input className={control} inputMode="decimal" value={line.quantity} required onChange={e => changeLine(index, { quantity: e.target.value })} /></label>
-          <label className="grid gap-2">Satuan<select className={control} value={line.unit} onChange={e => changeLine(index, { unit: e.target.value })}>{compatibleUnits(ingredient?.baseUnit ?? "pcs").map(unit => <option key={unit} value={unit}>{unit}</option>)}</select></label>
+          <label className="grid gap-2">
+  Satuan
+  <input
+    className={control}
+    value={ingredient?.baseUnit ?? ""}
+    disabled
+    readOnly
+  />
+</label>
           <label className="grid gap-2">Biaya Rp / {ingredient?.baseUnit ?? "satuan dasar"}<input className={control} inputMode="numeric" value={line.unitCost} required onChange={e => changeLine(index, { unitCost: e.target.value })} /></label>
           <button type="button" className={`${control} justify-self-start`} disabled={lines.length === 1} onClick={() => { if (!submission.current && !inFlight.current) setLines(current => current.filter((_, i) => i !== index)); }}>Hapus bahan {index + 1}</button>
         </fieldset>;
