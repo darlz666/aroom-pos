@@ -24,7 +24,7 @@ export function StockInForm({ actorId, ingredients, suppliers, loading, reload, 
   const [error, setError] = useState("");
   const inFlight = useRef(false), completed = useRef(false), submission = useRef<ReceivingSubmission | null>(null);
   const storageKey = `aroom.stock-in.pending.${actorId}`;
-  const available = ingredients.success ? ingredients.ingredients.filter(row => row.active) : [];
+  const available = ingredients.success ? ingredients.ingredients : [];
   const activeSuppliers = suppliers.success ? suppliers.suppliers.filter(row => row.active) : [];
   const locked = busy || !!pending || !!saved || !ready || loading || !ingredients.success || !suppliers.success;
 
