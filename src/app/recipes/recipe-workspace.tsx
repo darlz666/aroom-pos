@@ -18,6 +18,15 @@ const errors: Record<string, string> = {
 };
 const readError = "Data belum dapat dimuat. Periksa koneksi dan akses, lalu muat ulang.";
 
+function recipeUnits(baseUnit: string) {
+  if (baseUnit === "L") return ["ml", "L"];
+  if (baseUnit === "kg") return ["g", "kg"];
+  if (baseUnit === "g") return ["g"];
+  if (baseUnit === "ml") return ["ml"];
+  if (baseUnit === "pcs") return ["pcs"];
+  return [];
+}
+
 export function RecipeWorkspace({ actorId, canEdit, initial }: { actorId: string; canEdit: boolean; initial: Options }) {
   const [options, setOptions] = useState(initial);
   const [search, setSearch] = useState("");
@@ -155,13 +164,38 @@ export function RecipeWorkspace({ actorId, canEdit, initial }: { actorId: string
             {items.map((item, index) => <div key={index} className="flex flex-wrap items-end gap-3 rounded-lg border border-[#dedfd5] p-3">
               <label className="flex min-w-48 flex-1 flex-col gap-2">Bahan {index + 1}<select required className={control} value={item.ingredientId} onChange={e => {
                 const ingredient = options.success ? options.ingredients.find(row => row.id === e.target.value) : undefined;
-                update(index, { ingredientId: e.target.value, unit: ingredient?.baseUnit ?? "" });
+                update(index, {
+                ingredientId: e.target.value,
+                unit: recipeUnits(ingredient?.baseUnit ?? "")[0] ?? ""
+              });
               }}><option value="">Pilih bahan</option>
                 {options.success && options.ingredients.filter(ingredient => ingredient.id === item.ingredientId || (ingredient.active && !items.some(row => row.ingredientId === ingredient.id))).map(ingredient =>
                   <option key={ingredient.id} value={ingredient.id}>{ingredient.name}{!ingredient.active ? " · Nonaktif — ganti bahan" : ""}</option>)}
               </select></label>
               <label className="flex w-36 flex-col gap-2">Jumlah {index + 1}<input required inputMode="decimal" className={control} value={item.quantity} onChange={e => update(index, { quantity: e.target.value })} /></label>
-              <span className="py-4">{item.unit || "Satuan dasar"}</span>
+              <label className="flex w-32 flex-col gap-2">
+              Satuan
+              <select
+                className={control}
+                value={item.unit}
+                onChange={e => update(index, { unit: e.target.value })}
+                required
+              >
+                <option value="">Pilih</option>
+
+                {(() => {
+                  const ingredient = options.success
+                    ? options.ingredients.find(row => row.id === item.ingredientId)
+                    : undefined;
+
+                  return recipeUnits(ingredient?.baseUnit ?? "").map(unit => (
+                    <option key={unit} value={unit}>
+                      {unit}
+                    </option>
+                  ));
+                })()}
+              </select>
+            </label>
               <button type="button" className={control} onClick={() => { if (!editingDisabled) setItems(current => current.filter((_, i) => i !== index)); }}>Hapus bahan {index + 1}</button>
             </div>)}
             <div className="flex flex-wrap gap-3"><button type="button" className={control} disabled={items.length >= 100} onClick={() => { if (!editingDisabled) setItems(current => [...current, { ingredientId: "", quantity: "", unit: "" }]); }}>Tambah bahan</button>
