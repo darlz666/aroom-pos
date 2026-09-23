@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireOperator } from "@/lib/auth/authorization";
 import { getActiveShiftAction } from "@/lib/shifts/actions";
 import { prisma } from "@/lib/db";
+import { convertQuantity } from "@/lib/inventory/domain";
 import { PosMenu, type MenuCategory } from "./pos-menu";
 import { SettlementPanel } from "./settlement-panel";
 
@@ -9,25 +10,80 @@ export default async function PosPage() {
   const user = await requireOperator();
   const register = await getActiveShiftAction();
   const canOperate = register.success && (register.state === "OWNED" || register.state === "ADMIN_VIEW");
+  let rawCategories: any = null;
   let categories: MenuCategory[] | null = null;
   if (canOperate) {
-    try {
-      categories = await prisma.category.findMany({
-        where: { active: true },
-        orderBy: [{ displayOrder: "asc" }, { name: "asc" }, { id: "asc" }],
-        select: {
-          id: true, name: true,
-          products: {
-            where: { active: true },
-            orderBy: [{ name: "asc" }, { id: "asc" }],
-            select: { id: true, name: true, price: true, available: true },
+  try {
+    rawCategories = await prisma.category.findMany({
+  where: { active: true },
+  orderBy: [{ displayOrder: "asc" }, { name: "asc" }, { id: "asc" }],
+  select: {
+    id: true,
+    name: true,
+    products: {
+      where: { active: true },
+      orderBy: [{ name: "asc" }, { id: "asc" }],
+      select: {
+        id: true,
+        name: true,
+        price: true,
+        available: true,
+        recipe: {
+          select: {
+            items: {
+              select: {
+                quantity: true,
+                unit: true,
+                ingredient: {
+                  select: {
+                    name: true,
+                    currentStock: true,
+                    baseUnit: true,
+                  },
+                },
+              },
+            },
           },
         },
-      });
-    } catch {
-      // Fail closed without exposing database details or a misleading empty menu.
+      },
+    },
+  },
+});
+
+    if (rawCategories) {
+    categories = rawCategories.map((category: any) => ({
+        ...category,
+        products: category.products.map((product: any) => {
+          const stockIssues =
+            product.recipe?.items
+              ?.filter((item: any) => {
+                const required = convertQuantity(
+                  item.quantity.toString(),
+                  item.unit,
+                  item.ingredient.baseUnit
+                );
+
+                return item.ingredient.currentStock.lt(required);
+              })
+              ?.map((item: any) => item.ingredient.name) ?? [];
+
+          return {
+            id: product.id,
+            name: product.name,
+            price: product.price,
+            available: product.available,
+            stockAvailable: stockIssues.length === 0,
+            stockIssues,
+          };
+        }),
+      }));
     }
-  }
+
+  } catch (error) {
+  console.error("POS MENU ERROR:", error);
+}
+}
+   
 
   return (
     <main lang="id" className="flex flex-1 flex-col bg-[#f6f4ef] text-[#292e28] lg:h-dvh lg:flex-none">

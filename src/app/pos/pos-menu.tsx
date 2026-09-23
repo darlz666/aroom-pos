@@ -15,7 +15,14 @@ type Creation =
   | { state: "success"; order: Extract<Awaited<ReturnType<typeof createOrderAction>>, { success: true }>["order"] };
 const uncertainMessage = "Status pesanan belum dapat dipastikan. Coba kirim ulang pesanan yang sama untuk memeriksa hasilnya. Jangan meninggalkan atau memuat ulang halaman ini.";
 
-type MenuProduct = { id: string; name: string; price: number; available: boolean };
+type MenuProduct = {
+  id: string;
+  name: string;
+  price: number;
+  available: boolean;
+  stockAvailable: boolean;
+  stockIssues: string[];
+};
 export type MenuCategory = { id: string; name: string; products: MenuProduct[] };
 type CartLine = { product: MenuProduct; quantity: number };
 const rupiah = (value: number) => `Rp${new Intl.NumberFormat("id-ID").format(value)}`;
@@ -117,7 +124,11 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
   const total = cart.reduce((sum, line) => sum + line.product.price * line.quantity, 0);
 
   function add(product: MenuProduct) {
-    if (paymentLock.current || !product.available) return;
+    if (
+      paymentLock.current ||
+      !product.available ||
+      !product.stockAvailable
+    ) return;
     if (selectedOrder) {
       void mutatePersisted({ type: "ADD_ITEM", productId: product.id, quantity: 1 });
       return;
@@ -233,9 +244,29 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
               <div className="grid grid-cols-2 gap-3 xl:grid-cols-3">
                 {category.products.map(product => {
                   const quantity = selectedOrder ? 0 : cart.find(line => line.product.id === product.id)?.quantity ?? 0;
-                  return <button key={product.id} type="button" disabled={(selectedOrder ? persistedPending || conflicted : frozen) || !product.available || quantity >= 99} onClick={() => add(product)} aria-label={`Tambah ${product.name}`} className="flex min-h-36 min-w-0 flex-col items-start justify-between gap-3 rounded-xl border border-[#dedfd5] bg-[#fffefa] p-4 text-left hover:border-[#3e503c] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#3e503c] disabled:cursor-not-allowed disabled:bg-[#e9eade] disabled:text-[#62685c]">
+                  return <button key={product.id} type="button" disabled={
+                  (selectedOrder ? persistedPending || conflicted : frozen) ||
+                  !product.available ||
+                  !product.stockAvailable ||
+                  quantity >= 99
+                  } onClick={() => add(product)} aria-label={`Tambah ${product.name}`} className="flex min-h-36 min-w-0 flex-col items-start justify-between gap-3 rounded-xl border border-[#dedfd5] bg-[#fffefa] p-4 text-left hover:border-[#3e503c] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#3e503c] disabled:cursor-not-allowed disabled:bg-[#e9eade] disabled:text-[#62685c]">
                     <span className="font-semibold break-words">{product.name}</span>
-                    <span className="flex w-full flex-wrap items-center justify-between gap-2"><span className="tabular-nums">{rupiah(product.price)}</span><span className="text-sm font-semibold">{!product.available ? "Habis" : quantity >= 99 ? "Maks. 99" : quantity > 0 ? `${quantity} di keranjang +` : "+ Tambah"}</span></span>
+                    {!product.stockAvailable && (
+                    <span className="text-sm text-red-700">
+                      ⚠ Stok resep kosong: {product.stockIssues.join(", ")}
+                    </span>
+                  )}
+                    <span className="flex w-full flex-wrap items-center justify-between gap-2"><span className="tabular-nums">{rupiah(product.price)}</span><span className="text-sm font-semibold">{
+                  !product.available
+                    ? "Habis"
+                    : !product.stockAvailable
+                      ? "Stok resep kosong"
+                      : quantity >= 99
+                        ? "Maks. 99"
+                        : quantity > 0
+                          ? `${quantity} di keranjang +`
+                          : "+ Tambah"
+                  }</span></span>
                   </button>;
                 })}
               </div>
