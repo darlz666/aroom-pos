@@ -1,6 +1,6 @@
 import "server-only";
 import type { Prisma } from "../../generated/prisma/client";
-import type { BaseUnit } from "./domain";
+import { inventoryUnits, type BaseUnit } from "./domain";
 import { remainingStock, saleQuantity, SaleStockError, stockDecimal } from "./sale-domain";
 
 /** Internal payment integration only. Caller holds Shift -> Order -> Payment locks
@@ -25,7 +25,9 @@ export async function consumePaidOrderStock(tx: Prisma.TransactionClient, paymen
   for (const id of ingredientIds) {
     await tx.$queryRaw`SELECT id FROM "Ingredient" WHERE id = ${id}::uuid FOR UPDATE`;
     const ingredient = await tx.ingredient.findUnique({ where: { id } });
-    if (!ingredient || !["g", "ml", "pcs"].includes(ingredient.baseUnit)) throw new SaleStockError("INVALID_INVENTORY_STATE");
+    if (!ingredient || !inventoryUnits.includes(ingredient.baseUnit)) {
+  throw new SaleStockError("INVALID_INVENTORY_STATE");
+    }
     if (!ingredient.active) throw new SaleStockError("RECIPE_INGREDIENT_INACTIVE");
     let quantity = BigInt(0);
     for (const item of payment.order.items) {
