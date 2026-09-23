@@ -8,7 +8,7 @@ export class InventoryError extends Error {
 }
 
 export const inventoryUnits = ["g", "kg", "ml", "L", "pcs"] as const satisfies readonly InventoryUnit[];
-export type BaseUnit = "g" | "ml" | "pcs";
+export type BaseUnit = "g" | "kg" | "ml" | "L" | "pcs";
 const conversions = {
   g: { unit: "g", factor: 1 }, kg: { unit: "g", factor: 1000 },
   ml: { unit: "ml", factor: 1 }, L: { unit: "ml", factor: 1000 },
@@ -34,7 +34,7 @@ export function inventoryUnit(value: unknown): InventoryUnit {
 }
 
 export function canonicalUnit(value: unknown): BaseUnit {
-  return conversions[inventoryUnit(value)].unit;
+  return inventoryUnit(value) as BaseUnit;
 }
 
 /** Exact decimals only, bounded to NUMERIC(18,3); never round or clamp inputs. */

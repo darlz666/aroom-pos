@@ -9,7 +9,8 @@ test("exact supported conversions and canonical ingredient units", () => {
     [100, "ml", "L", "0.1"], [125, "g", "kg", "0.125"], ["0.125", "kg", "g", "125"],
     ["0.001", "g", "g", "0.001"], [3, "pcs", "pcs", "3"],
   ] as const) assert.equal(convertQuantity(quantity, from, to).toString(), expected);
-  assert.equal(canonicalUnit("kg"), "g"); assert.equal(canonicalUnit("L"), "ml");
+  assert.equal(canonicalUnit("kg"), "kg");
+  assert.equal(canonicalUnit("L"), "L");
   for (const unit of ["bottle", "liter", "l", "ML", "oz", "", undefined]) {
     assert.throws(() => inventoryUnit(unit), { code: "INVALID_UNIT" });
   }
@@ -32,8 +33,8 @@ test("quantities reject negative, nonfinite, overflow and excessive precision wi
 test("ingredient metadata is normalized; client stock balances and invalid inputs are rejected", () => {
   const input = { name: " Oatmilk ", baseUnit: "L", minimumStock: "1.5", active: false };
   const value = ingredientInput(input);
-  assert.equal(value.name, "Oatmilk"); assert.equal(value.baseUnit, "ml");
-  assert.equal(value.minimumStock.toString(), "1500"); assert.equal(value.active, false);
+  assert.equal(value.name, "Oatmilk"); assert.equal(value.baseUnit, "L");
+  assert.equal(value.minimumStock.toString(), "1.5"); assert.equal(value.active, false);
   assert.equal(ingredientInput({ name: "Sugar", baseUnit: "kg" }).minimumStock.toString(), "0");
   for (const raw of [null, [], {}, { ...input, name: " " }, { ...input, name: "x".repeat(129) },
     { ...input, active: "true" }, { ...input, currentStock: 12000 }, { ...input, unitCost: 15 }, { ...input, id: randomUUID() }]) {
