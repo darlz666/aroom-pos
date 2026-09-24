@@ -54,7 +54,12 @@ export function StockInHistory({ initial }: { initial?: HistoryResult }) {
           <span className="block text-xl font-semibold">{row.supplierName}</span><span className="block break-all text-sm">{row.referenceNumber}</span>
           <span className="block">{dateTime(row.receivedAt)} WIB</span><span className="block">{row.itemCount} bahan · {rupiah(row.total)}</span><span className="block">Dicatat oleh {row.actorName}</span><span className="mt-2 block font-semibold">Lihat detail</span>
         </button>)}</div>
-        {selected && <section className={`${card} min-w-0`} aria-label="Detail Stock In">
+        {selected && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <section
+              className={`${card} max-h-[90vh] w-full max-w-xl overflow-y-auto`}
+              aria-label="Detail Stock In"
+            >
           <div className="flex items-center justify-between gap-3"><h3 className="text-xl font-semibold">Detail penerimaan</h3><button type="button" className={control} onClick={() => { detailRequest.current++; setSelected(null); setDetail(null); }}>Tutup detail</button></div>
           {detailError ? <div><p role="alert">{detailError}</p><button type="button" className={control} onClick={() => open(selected)}>Coba muat detail lagi</button></div> : !detail ? <p role="status">Memuat detail…</p> : <div className="mt-4 space-y-4">
             <div><p className="text-xl font-semibold">{detail.supplierName}</p><p className="break-all text-sm">{detail.referenceNumber}</p>
@@ -64,7 +69,9 @@ export function StockInHistory({ initial }: { initial?: HistoryResult }) {
               <p>{rupiah(item.purchaseUnitCost ?? item.unitCost!)} / {item.purchaseUnitCost !== null ? item.inputUnit : item.baseUnit}</p><p className="text-lg font-semibold">{rupiah(item.lineTotal)}</p></article>)}
             <p className="border-t border-[#dedfd5] pt-4 text-2xl font-semibold">Total {rupiah(detail.total)}</p>
           </div>}
-        </section>}
+            </section>
+  </div>
+)}
       </div>
       <div className="flex gap-3">{cursor && <button type="button" className={control} onClick={() => load()}>Kembali ke terbaru</button>}{list.nextCursor && <button type="button" className={control} onClick={() => load(list.nextCursor!)}>Lebih lama</button>}</div>
     </>}
