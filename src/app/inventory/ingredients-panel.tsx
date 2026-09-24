@@ -138,7 +138,7 @@ export function IngredientsPanel({
                 </h3>
 
                 <p>
-                    Stok: {ingredient.currentStock}
+                    Stok: {ingredient.currentStock} {ingredient.baseUnit}
                 </p>
 
                 <p>
