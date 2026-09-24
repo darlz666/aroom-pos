@@ -11,6 +11,7 @@ export function StockInHistory({ initial }: { initial?: HistoryResult }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<StockInDetail | null>(null);
   const [detailError, setDetailError] = useState("");
+  const [modalOpen, setModalOpen] = useState(false);
   const listRequest = useRef(0), detailRequest = useRef(0);
 
   async function load(next?: string) {
@@ -36,7 +37,17 @@ export function StockInHistory({ initial }: { initial?: HistoryResult }) {
 
   async function open(id: string) {
     const request = ++detailRequest.current;
-    setSelected(id); setDetail(null); setDetailError("");
+    setModalOpen(false);
+
+    setTimeout(() => {
+      setSelected(id);
+      setDetail(null);
+      setDetailError("");
+
+      requestAnimationFrame(() => {
+        setModalOpen(true);
+      });
+}, 20);
     try {
       const result = await getStockInAction(id);
       if (request !== detailRequest.current) return;
@@ -54,13 +65,35 @@ export function StockInHistory({ initial }: { initial?: HistoryResult }) {
           <span className="block text-xl font-semibold">{row.supplierName}</span><span className="block break-all text-sm">{row.referenceNumber}</span>
           <span className="block">{dateTime(row.receivedAt)} WIB</span><span className="block">{row.itemCount} bahan · {rupiah(row.total)}</span><span className="block">Dicatat oleh {row.actorName}</span><span className="mt-2 block font-semibold">Lihat detail</span>
         </button>)}</div>
-        {selected && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-            <section
-              className={`${card} max-h-[90vh] w-full max-w-xl overflow-y-auto`}
-              aria-label="Detail Stock In"
-            >
-          <div className="flex items-center justify-between gap-3"><h3 className="text-xl font-semibold">Detail penerimaan</h3><button type="button" className={control} onClick={() => { detailRequest.current++; setSelected(null); setDetail(null); }}>Tutup detail</button></div>
+          {selected && (
+          <div
+            className={`fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 transition-opacity duration-300 ${
+              modalOpen ? "opacity-100" : "opacity-0"
+            }`}
+          >
+          <section
+            className={`${card} max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl shadow-2xl transition-all duration-300 ease-out ${
+            modalOpen
+              ? "scale-100 translate-y-0 opacity-100"
+              : "scale-95 translate-y-4 opacity-0"
+          }`}
+            aria-label="Detail Stock In"
+          >
+          <div className="flex items-center justify-between gap-3"><h3 className="text-xl font-semibold">Detail penerimaan</h3><button
+            type="button"
+            className={control}
+            onClick={() => {
+              detailRequest.current++;
+              setModalOpen(false);
+
+              setTimeout(() => {
+                setSelected(null);
+                setDetail(null);
+              }, 300);
+            }}
+          >
+            Tutup detail
+          </button></div>
           {detailError ? <div><p role="alert">{detailError}</p><button type="button" className={control} onClick={() => open(selected)}>Coba muat detail lagi</button></div> : !detail ? <p role="status">Memuat detail…</p> : <div className="mt-4 space-y-4">
             <div><p className="text-xl font-semibold">{detail.supplierName}</p><p className="break-all text-sm">{detail.referenceNumber}</p>
               <p>Diterima: {dateTime(detail.receivedAt)} WIB</p><p>Dicatat: {dateTime(detail.createdAt)} WIB</p><p>Oleh: {detail.actorName}</p><p className="whitespace-pre-wrap break-words">{detail.notes}</p></div>

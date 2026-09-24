@@ -43,11 +43,38 @@ export default async function InventoryPage() {
     <div className="mx-auto max-w-7xl space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-4 border-b border-[#dedfd5] pb-5">
         <div><p className="text-sm font-semibold tracking-widest text-[#62685c]">AROOM COFFEE BAR</p><h1 className="text-3xl font-semibold">Stock Management</h1></div>
-        <div className="flex flex-wrap items-center gap-4"><p>{actor.name}</p>
-          <Link href="/recipes" className="inline-flex min-h-14 items-center rounded-lg border border-[#a8aea0] px-5 font-semibold">Resep &amp; HPP</Link>
-          {actor.role === "ADMIN" && <Link href="/admin" className="inline-flex min-h-14 items-center rounded-lg border border-[#a8aea0] px-5 font-semibold">Admin</Link>}
-          <form action={logout}><button className="min-h-14 rounded-lg border border-[#a8aea0] px-5 font-semibold" type="submit">Logout</button></form>
-        </div>
+        <div className="flex flex-col items-end gap-3">
+  <p className="text-sm font-medium text-[#62685c]">
+    {actor.name}
+  </p>
+
+  <div className="flex flex-wrap items-center gap-4">
+    <Link
+      href="/recipes"
+      className="inline-flex min-h-14 items-center rounded-lg border border-[#a8aea0] px-5 font-semibold"
+    >
+      Resep &amp; HPP
+    </Link>
+
+    {actor.role === "ADMIN" && (
+      <Link
+        href="/admin"
+        className="inline-flex min-h-14 items-center rounded-lg border border-[#a8aea0] px-5 font-semibold"
+      >
+        Admin
+      </Link>
+    )}
+
+    <form action={logout}>
+      <button
+        className="min-h-14 rounded-lg border border-[#a8aea0] px-5 font-semibold"
+        type="submit"
+      >
+        Logout
+      </button>
+    </form>
+  </div>
+</div>
       </header>
       <InventoryWorkspace
       key={actor.id}

@@ -32,7 +32,10 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [orderType, setOrderType] = useState<"DINE_IN" | "TAKEAWAY">("DINE_IN");
-  const [creation, setCreation] = useState<Creation>({ state: "idle" });
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [creation, setCreation] = useState<Creation>({
+  state: "idle",
+});
   const [selectedOrder, setSelectedOrder] = useState<SafeOrder | null>(null);
   const [orderRefresh, setOrderRefresh] = useState(0);
   // Synchronous guards also protect handlers invoked before React rerenders.
@@ -228,9 +231,9 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
     }} /></div></>;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.65fr)]">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:grid lg:h-full lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.65fr)]">
       <ActiveOrders refreshToken={orderRefresh} selectedOrder={selectedOrder} pending={persistedPending} loadingOrder={loadingOrder} conflicted={conflicted} mutationError={persistedError} onPay={() => { if (selectedOrder?.status === "UNPAID" && !orderMutationPending.current && !conflictLock.current && !paymentLock.current) { paymentLock.current = true; setPaymentOrder(selectedOrder); } }} onSelect={order => { if (!paymentLock.current && !orderMutationPending.current && !conflictLock.current) setSelectedOrder(order); }} onMutate={mutatePersisted} onCancel={cancelPersisted} onReload={reloadPersisted} />
-      <section aria-label="Menu" className="min-h-0 min-w-0 lg:flex lg:flex-col">
+      <section aria-label="Menu" className="min-h-0 min-w-0 overflow-hidden lg:flex lg:flex-col">
         <nav aria-label="Kategori menu" className="flex shrink-0 gap-2 overflow-x-auto border-b border-[#dedfd5] p-4">
           {[{ id: null, name: "Semua" }, ...categories].map(category => (
             <button key={category.id ?? "all"} type="button" aria-pressed={categoryId === category.id} onClick={() => setCategoryId(category.id)} className={`${control} shrink-0 ${categoryId === category.id ? "bg-[#344631] text-white hover:bg-[#293926]" : "bg-[#fffefa]"}`}>{category.name}</button>
@@ -274,19 +277,19 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
           ))}
         </div>
       </section>
-      {!selectedOrder && <aside id="cart" aria-labelledby="cart-heading" className="flex min-h-0 min-w-0 scroll-mt-4 flex-col border-t border-[#dedfd5] bg-[#fffefa] lg:border-t-0 lg:border-l">
-        <div className="shrink-0 p-4">
+      {!selectedOrder && <aside id="cart" aria-labelledby="cart-heading" className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden scroll-mt-4 border-t border-[#dedfd5] bg-[#fffefa] lg:border-t-0 lg:border-l">
+        <div className="shrink-0 px-4 pt-2 pb-2">
           <h2 id="cart-heading" className="text-xl font-semibold">Pesanan Baru <span className="text-base font-normal">({count} item)</span></h2>
-          <fieldset className="mt-4"><legend className="mb-2 text-sm text-[#62685c]">Jenis pesanan</legend><div className="grid grid-cols-2 gap-2">
+          <fieldset className="mt-2"><legend className="mb-2 text-sm text-[#62685c]">Jenis pesanan</legend><div className="grid grid-cols-2 gap-2">
             {([ ["DINE_IN", "DINE IN"], ["TAKEAWAY", "TAKEAWAY"] ] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={orderType === value} disabled={frozen} onClick={() => { if (editDraft()) setOrderType(value); }} className={`${control} ${orderType === value ? "bg-[#344631] text-white hover:bg-[#293926]" : ""}`}>{label}</button>)}
           </div></fieldset>
         </div>
-        <div className="px-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-y-auto px-4">
           {cart.length === 0 ? <p className="py-10 text-center leading-relaxed text-[#62685c]">Keranjang masih kosong.<br />Pilih produk dari menu untuk mulai.</p> : <ul className="divide-y divide-[#dedfd5]">
-            {cart.map(({ product, quantity }) => <li key={product.id} className="py-4">
+            {cart.map(({ product, quantity }) => <li key={product.id} className="py-3">
               <div className="flex flex-wrap justify-between gap-2"><h3 className="min-w-0 font-semibold break-words">{product.name}</h3><p className="font-semibold tabular-nums">{rupiah(product.price * quantity)}</p></div>
               <p className="mt-1 text-sm text-[#62685c]">{rupiah(product.price)} / item</p>
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2">
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2">
                 <button type="button" className={control} disabled={frozen || quantity === 1} aria-label={`Kurangi ${product.name}`} onClick={() => adjust(product.id, -1)}>−</button>
                 <span aria-label={`Jumlah ${product.name}`} className="min-w-8 text-center text-lg tabular-nums">{quantity}</span>
                 <button type="button" className={control} disabled={frozen || quantity === 99} aria-label={`Tambah jumlah ${product.name}`} onClick={() => adjust(product.id, 1)}>+</button>
@@ -294,7 +297,7 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
             </li>)}
           </ul>}
         </div>
-        <div className="shrink-0 border-t border-[#dedfd5] p-4">
+        <div className="shrink-0 border-t border-[#dedfd5] p-3">
           <div aria-live="polite" aria-atomic="true" className="flex flex-wrap items-center justify-between gap-2"><span className="font-semibold">Total sementara</span><strong className="text-3xl tabular-nums">{rupiah(total)}</strong></div>
           {creation.state === "success" ? <div role="status" className="mt-4 rounded-lg border border-[#344631] bg-[#e9eade] p-4">
             <h3 className="text-lg font-semibold">Pesanan berhasil dibuat</h3>
@@ -307,9 +310,108 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
             {"error" in creation && <p role="alert" className="mt-3 rounded-lg border border-[#8b3026] p-3 text-[#8b3026]">{creation.error}{creation.state === "conflict" && " Tinjau pesanan dan muat ulang status sebelum melanjutkan. Jangan membuat permintaan pengganti."}</p>}
             {creation.state === "submitting" && <p role="status" className="mt-3">Menyimpan pesanan. Keranjang dikunci sementara.</p>}
             {(creation.state === "idle" || creation.state === "validation-error") && <p className="mt-3 text-sm leading-relaxed text-[#62685c]">Keranjang belum disimpan. Isi keranjang hilang saat meninggalkan atau memuat ulang halaman.</p>}
-            <button type="button" disabled={cart.length === 0 || creation.state === "submitting" || creation.state === "conflict"} onClick={submit} className="mt-4 min-h-14 w-full rounded-lg bg-[#344631] px-5 py-3 text-lg font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">{creation.state === "submitting" ? "Menyimpan..." : creation.state === "uncertain" ? "Coba Lagi" : "Buat Pesanan"}</button>
+            <button type="button" disabled={cart.length === 0 || creation.state === "submitting" || creation.state === "conflict"} onClick={() => setShowConfirm(true)} className="mt-4 min-h-14 w-full rounded-lg bg-[#344631] px-5 py-3 text-lg font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">{creation.state === "submitting" ? "Menyimpan..." : creation.state === "uncertain" ? "Coba Lagi" : "Buat Pesanan"}</button>
           </>}
         </div>
+               {showConfirm && (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+
+    <section className="w-full max-w-md overflow-hidden rounded-2xl border border-[#dedfd5] bg-[#fffefa] shadow-2xl">
+
+      {/* Header */}
+      <div className="border-b border-[#dedfd5] px-5 py-4">
+        <h2 className="text-xl font-semibold">
+          Konfirmasi Pesanan
+        </h2>
+
+        <p className="mt-1 text-sm text-[#62685c]">
+          Pastikan pesanan pelanggan sudah benar
+        </p>
+      </div>
+
+
+      {/* List item */}
+      <div className="max-h-[320px] overflow-y-auto px-5 py-3">
+        <div className="divide-y divide-[#dedfd5] rounded-xl border border-[#dedfd5]">
+
+          {cart.map(({product, quantity}) => (
+            <div
+              key={product.id}
+              className="flex items-center justify-between gap-3 px-4 py-3"
+            >
+              <div className="min-w-0">
+                <p className="font-medium break-words">
+                  {product.name}
+                </p>
+
+                <p className="text-sm text-[#62685c]">
+                  {rupiah(product.price)} / item
+                </p>
+              </div>
+
+              <div className="text-right">
+                <p className="font-semibold">
+                  {quantity}x
+                </p>
+
+                <p className="text-sm text-[#62685c]">
+                  {rupiah(product.price * quantity)}
+                </p>
+              </div>
+
+            </div>
+          ))}
+
+        </div>
+      </div>
+
+
+      {/* Total */}
+      <div className="mx-5 mb-4 rounded-xl bg-[#f6f4ef] px-4 py-3">
+        <div className="flex items-center justify-between">
+          <span className="font-semibold">
+            Total
+          </span>
+
+          <strong className="text-2xl tabular-nums">
+            {rupiah(total)}
+          </strong>
+        </div>
+      </div>
+
+
+      {/* Action */}
+      <div className="grid gap-3 px-5 pb-5">
+
+        <button
+          type="button"
+          className="min-h-14 rounded-xl bg-[#344631] px-5 font-semibold text-white hover:bg-[#293926]"
+          onClick={()=>{
+            submit();
+            setShowConfirm(false);
+          }}
+        >
+          Konfirmasi Pesanan
+        </button>
+
+
+        <button
+          type="button"
+          className="min-h-14 rounded-xl border border-[#a8aea0] font-semibold hover:bg-[#f6f4ef]"
+          onClick={()=>{
+            setShowConfirm(false);
+          }}
+        >
+          Kembali Edit
+        </button>
+
+      </div>
+
+    </section>
+
+  </div>
+)}
+      
       </aside>}
       {!selectedOrder && <a href="#cart" className="sticky bottom-0 flex min-h-14 items-center justify-between gap-3 bg-[#344631] px-4 py-3 font-semibold text-white focus-visible:outline-2 focus-visible:outline-offset-2 lg:hidden"><span>Lihat keranjang · {count} item</span><span className="tabular-nums">{rupiah(total)}</span></a>}
     </div>
@@ -376,7 +478,10 @@ function ActiveOrders({
     if (result?.success) { setConfirmCancel(false); setReason(""); }
   }
 
-  return <section aria-labelledby="active-orders-heading" className="col-span-full border-b border-[#dedfd5] bg-[#fffefa] p-4 sm:p-6">
+  return <section
+  aria-labelledby="active-orders-heading"
+  className="col-span-full min-h-0 max-h-[40vh] overflow-y-auto border-b border-[#dedfd5] bg-[#fffefa] p-4 sm:p-6"
+>
     <div className="flex flex-wrap items-baseline justify-between gap-2">
       <h2 id="active-orders-heading" className="text-xl font-semibold">Pesanan Aktif</h2>
       <button type="button" className={control} onClick={() => void load()} disabled={pending || loading}>Muat ulang daftar</button>
@@ -389,7 +494,10 @@ function ActiveOrders({
         <strong>{order.orderNumber}</strong><span>{rupiah(order.total)} · {order.items.reduce((sum, item) => sum + item.quantity, 0)} item</span><span className="text-sm text-[#62685c]">{order.orderType === "DINE_IN" ? "DINE IN" : "TAKEAWAY"} · {new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", dateStyle: "short", timeStyle: "short" }).format(new Date(order.createdAt))}</span>
       </button>)}
     </div>}
-    {selectedOrder && <div className="mt-5 rounded-xl border border-[#a8aea0] p-4" aria-label={`Detail ${selectedOrder.orderNumber}`}>
+    {selectedOrder && <div
+  className="mt-5 max-h-[50vh] overflow-y-auto rounded-xl border border-[#a8aea0] p-4"
+  aria-label={`Detail ${selectedOrder.orderNumber}`}
+>
       <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="text-lg font-semibold">Edit {selectedOrder.orderNumber}</h3><p className="text-sm text-[#62685c]">{selectedOrder.status} · {selectedOrder.orderType} · Revisi {selectedOrder.revision} · Total {rupiah(selectedOrder.total)}</p></div><button type="button" className={control} disabled={pending} onClick={() => void select(selectedOrder, true)}>Muat Ulang Pesanan</button></div>
       <p className="mt-2 text-sm text-[#62685c]">Pesanan tersimpan. Total dari server. Setiap perubahan langsung disimpan. Pilih produk dari menu untuk menambah item ke pesanan ini.</p><ul className="mt-3 divide-y divide-[#dedfd5]">{selectedOrder.items.map(item => <li key={item.id} className="flex flex-wrap items-center justify-between gap-2 py-3"><span className="min-w-0 break-words"><strong>{item.productName}</strong><span className="ml-2 text-sm text-[#62685c]">{rupiah(item.unitPrice)} / item</span></span><span className="flex items-center gap-2"><button type="button" className={control} aria-label={`Kurangi ${item.productName}`} disabled={pending || conflicted || item.quantity <= 1} onClick={() => void onMutate({ type: "SET_QUANTITY", orderItemId: item.id, quantity: item.quantity - 1 })}>−</button><span className="min-w-6 text-center">{item.quantity}</span><button type="button" className={control} aria-label={`Tambah jumlah ${item.productName}`} disabled={pending || conflicted || item.quantity >= 99} onClick={() => void onMutate({ type: "SET_QUANTITY", orderItemId: item.id, quantity: item.quantity + 1 })}>+</button><button type="button" className={`${control} text-[#8b3026]`} aria-label={`Hapus ${item.productName}`} disabled={pending || conflicted} onClick={() => void onMutate({ type: "REMOVE_ITEM", orderItemId: item.id })}>Hapus</button></span></li>)}</ul>
       <button type="button" className={control + " mt-3 bg-[#344631] text-white"} disabled={pending || conflicted || selectedOrder.status !== "UNPAID"} onClick={onPay}>Bayar pesanan</button>

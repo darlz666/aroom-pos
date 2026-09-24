@@ -37,6 +37,38 @@ export function IngredientsPanel({
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
     const [notice, setNotice] = useState("");
+    const [search, setSearch] = useState("");
+    const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "EMPTY">("ALL");
+    const filteredIngredients = result.success
+  ? result.ingredients.filter(ingredient => {
+      const matchSearch = ingredient.name
+        .toLowerCase()
+        .includes(search.toLowerCase());
+
+      const stock = Number(ingredient.currentStock);
+
+      const matchStatus =
+        statusFilter === "ALL"
+          ? true
+          : statusFilter === "ACTIVE"
+            ? stock > 0
+            : stock <= 0;
+
+      return matchSearch && matchStatus;
+    })
+  : [];
+
+  const activeCount = result.success
+  ? result.ingredients.filter(
+      item => Number(item.currentStock) > 0
+    ).length
+  : 0;
+
+const emptyCount = result.success
+  ? result.ingredients.filter(
+      item => Number(item.currentStock) <= 0
+    ).length
+  : 0;
   return (
     <div className="space-y-5">
       <div>
@@ -47,7 +79,7 @@ export function IngredientsPanel({
           Kelola daftar bahan untuk Stock In dan resep.          
         </p>
         <form
-            className={card}
+            className={`${card} space-y-5`}
             onSubmit={async (event) => {
                 event.preventDefault();
 
@@ -73,7 +105,7 @@ export function IngredientsPanel({
                 Tambah bahan
             </h3>
 
-            <label className="grid gap-2">
+            <label className="grid gap-3">
                 Nama bahan
                 <input
                 className={control}
@@ -88,7 +120,7 @@ export function IngredientsPanel({
                 />
             </label>
 
-            <label className="grid gap-2">
+            <label className="grid gap-3">
                 Satuan dasar
                 <select
                 className={control}
@@ -109,8 +141,8 @@ export function IngredientsPanel({
             </label>
 
             <button
-                className={primary}
-                disabled={busy}
+              className={`${primary} mt-4`}
+              disabled={busy}
             >
                 {busy ? "Menyimpan..." : "Simpan bahan"}
             </button>
@@ -130,24 +162,76 @@ export function IngredientsPanel({
       ) : !result.success ? (
         <p>Data bahan belum dapat dimuat.</p>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {result.ingredients.map(ingredient => (
-           <article key={ingredient.id} className={card}>
-                <h3 className="text-xl font-semibold">
-                    {ingredient.name}
-                </h3>
+        <>
+          <div className="mb-4 flex flex-wrap gap-3">
 
-                <p>
-                    Stok: {ingredient.currentStock} {ingredient.baseUnit}
-                </p>
+  <input
+    className={`${control} flex-1`}
+    placeholder="Cari bahan..."
+    value={search}
+    onChange={(event) => setSearch(event.target.value)}
+  />
 
-                <p>
-                    Status: {Number(ingredient.currentStock) > 0 ? "Aktif" : "Kosong"}
-                </p>
-            </article>
-          ))}
-        </div>
-      )}
+  <button
+    type="button"
+    className={`${control} ${
+      statusFilter === "ACTIVE"
+        ? "border-[#344631] bg-[#e9eade]"
+        : ""
+    }`}
+    onClick={() =>
+      setStatusFilter(
+        statusFilter === "ACTIVE" ? "ALL" : "ACTIVE"
+      )
+    }
+  >
+    Aktif {activeCount}
+  </button>
+
+
+  <button
+    type="button"
+    className={`${control} ${
+      statusFilter === "EMPTY"
+        ? "border-[#344631] bg-[#e9eade]"
+        : ""
+    }`}
+    onClick={() =>
+      setStatusFilter(
+        statusFilter === "EMPTY" ? "ALL" : "EMPTY"
+      )
+    }
+  >
+    Kosong {emptyCount}
+  </button>
+
+</div>
+
+          {filteredIngredients.length === 0 ? (
+  <p className="text-[#62685c]">
+    Bahan tidak ditemukan.
+  </p>
+) : (
+  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+    {filteredIngredients.map(ingredient => (
+      <article key={ingredient.id} className={card}>
+        <h3 className="text-xl font-semibold">
+          {ingredient.name}
+        </h3>
+
+        <p>
+          Stok: {ingredient.currentStock} {ingredient.baseUnit}
+        </p>
+
+        <p>
+          Status: {Number(ingredient.currentStock) > 0 ? "Aktif" : "Kosong"}
+        </p>
+      </article>
+    ))}
+  </div>
+    )}
+  </>
+)}
     </div>
   );
 }
