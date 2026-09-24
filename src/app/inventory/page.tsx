@@ -37,6 +37,8 @@ export default async function InventoryPage() {
     }
   : movements;
 
+
+
   return <main lang="id" className="flex-1 bg-[#f6f4ef] p-4 text-[#292e28] sm:p-6">
     <div className="mx-auto max-w-7xl space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-4 border-b border-[#dedfd5] pb-5">

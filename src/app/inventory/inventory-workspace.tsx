@@ -78,6 +78,49 @@ export function InventoryWorkspace({
     }}
   />
 </section>
+
+<section hidden={tab !== "suppliers"} aria-label="Supplier">
+  <SuppliersPanel
+    result={suppliers}
+    loading={busy}
+    reload={reload}
+    onWriting={setWriting}
+    onSaved={(supplier) => {
+      setSuppliers(current =>
+        current.success
+          ? {
+              success: true,
+              suppliers: [
+                ...current.suppliers.filter(
+                  row => row.id !== supplier.id
+                ),
+                supplier,
+              ].sort((a, b) =>
+                a.name.localeCompare(b.name)
+              ),
+            }
+          : current
+      );
+    }}
+  />
+</section>
+
+<section hidden={tab !== "receive"} aria-label="Stock In">
+  <StockInForm
+    actorId={actorId}
+    ingredients={ingredients}
+    suppliers={suppliers}
+    loading={busy}
+    reload={reload}
+    onSaved={() => {
+      reload();
+    }}
+    onHistory={() => {
+      setTab("history");
+    }}
+  />
+</section>
+
     <section hidden={tab !== "history"} aria-label="Riwayat Stock In">
   <StockInHistory 
     key={historyVersion} 
