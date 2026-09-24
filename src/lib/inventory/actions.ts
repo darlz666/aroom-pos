@@ -16,6 +16,22 @@ import {
   listSuppliers,
   updateSupplier
 } from "./service";
+import { listStockMovements } from "./movement-service";
+
+export async function listStockMovementsAction() {
+  try {
+    return {
+      success: true,
+      movements: await listStockMovements(
+        prisma,
+        await requireInventoryManager()
+      )
+    } as const;
+  }
+  catch (error) {
+    return failure(error);
+  }
+}
 
 function failure(error: unknown) {
   console.error("INVENTORY ERROR:", error);
