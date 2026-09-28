@@ -14,11 +14,11 @@ test("identifier normalization is deterministic and idempotent", () => {
 });
 
 test("password policy counts characters without composition or transformation", () => {
-  for (const length of [0, 11, 129]) assert.equal(validatePassword("a".repeat(length)), false);
-  for (const length of [12, 128]) assert.equal(validatePassword("a".repeat(length)), true);
-  assert.equal(validatePassword("😀".repeat(11)), false);
+  for (const length of [0, 8, 129]) assert.equal(validatePassword("a".repeat(length)), false);
+  for (const length of [9, 128]) assert.equal(validatePassword("a".repeat(length)), true);
+  assert.equal(validatePassword("😀".repeat(8)), false);
   assert.equal(validatePassword("😀".repeat(128)), true);
-  assert.equal(validatePassword(" aaaaaaaaaa "), true);
+  assert.equal(validatePassword(" aaaaaaa "), true);
 });
 
 test("Argon2id uses fresh salts and safely verifies passwords and invalid hashes", async () => {
@@ -30,11 +30,13 @@ test("Argon2id uses fresh salts and safely verifies passwords and invalid hashes
   assert.equal(await verifyPassword(first, password), true);
   assert.equal(await verifyPassword(first, password.trim()), false);
   assert.equal(await verifyPassword(first, "wrong password"), false);
+  const resetHash = await hashPassword("Masuk123!");
+  assert.equal(await verifyPassword(resetHash, "Masuk123!"), true);
   for (const invalid of ["", "invalid", "$argon2id$v=19$broken"]) {
     assert.equal(await verifyPassword(invalid, password), false);
   }
-  await assert.rejects(hashPassword("short"), /12 to 128/);
-  await assert.rejects(hashPassword("a".repeat(129)), /12 to 128/);
+  await assert.rejects(hashPassword("short"), /9 to 128/);
+  await assert.rejects(hashPassword("a".repeat(129)), /9 to 128/);
 });
 
 test("session imports are lazy; tokens enforce identity, signature and lifetime", async () => {

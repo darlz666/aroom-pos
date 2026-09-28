@@ -4,15 +4,23 @@ import { unstable_rethrow } from "next/navigation";
 import { requireRole } from "../auth/authorization";
 import { prisma } from "../db";
 import { UserManagementError } from "./domain";
-import { changeUserRole, createUser, listUsers, setUserActive } from "./service";
+import {
+  changeUserRole,
+  createUser,
+  deleteUser,
+  listUsers,
+  resetUserPassword,
+  setUserActive,
+  updateUser,
+} from "./service";
 
 const messages = {
   FORBIDDEN: "Access Management hanya tersedia untuk Admin aktif.",
-  INVALID_INPUT: "Periksa isian. Nama dan login wajib diisi (maksimal 128 karakter); password harus 12–128 karakter.",
+  INVALID_INPUT: "Periksa isian. Nama dan login wajib diisi (maksimal 128 karakter); password harus 9–128 karakter.",
   INVALID_ROLE: "Pilih role yang valid.",
   DUPLICATE_LOGIN: "Login sudah digunakan. Muat ulang daftar pengguna sebelum mencoba lagi.",
   NOT_FOUND: "Pengguna tidak ditemukan. Muat ulang daftar pengguna.",
-  SELF_ACCESS_CHANGE: "Anda tidak dapat menonaktifkan akun sendiri atau mengubah role sendiri dari ADMIN.",
+  SELF_ACCESS_CHANGE: "Anda tidak dapat menonaktifkan, menghapus, atau mengubah role akun sendiri dari ADMIN.",
   LAST_ADMIN: "Setidaknya satu ADMIN harus tetap aktif.",
   UNAVAILABLE: "Status belum dapat dipastikan. Periksa koneksi dan muat ulang daftar pengguna sebelum mencoba lagi.",
 };
@@ -44,4 +52,43 @@ export async function setUserActiveAction(input: unknown) {
     const actor = await requireRole("ADMIN");
     return { success: true, user: await setUserActive(prisma, actor, input) } as const;
   } catch (error) { return failure(error); }
+}
+
+export async function resetUserPasswordAction(input: unknown) {
+  try {
+    const actor = await requireRole("ADMIN");
+
+    return {
+      success: true,
+      user: await resetUserPassword(prisma, actor, input),
+    } as const;
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+export async function deleteUserAction(input: unknown) {
+  try {
+    const actor = await requireRole("ADMIN");
+
+    return {
+      success: true,
+      result: await deleteUser(prisma, actor, input),
+    } as const;
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+export async function updateUserAction(input: unknown) {
+  try {
+    const actor = await requireRole("ADMIN");
+
+    return {
+      success: true,
+      user: await updateUser(prisma, actor, input),
+    } as const;
+  } catch (error) {
+    return failure(error);
+  }
 }

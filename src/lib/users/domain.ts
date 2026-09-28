@@ -40,3 +40,51 @@ export function setActiveInput(input: unknown) {
   if (typeof raw.active !== "boolean") throw new UserManagementError("INVALID_INPUT");
   return { userId: userId(raw.userId), active: raw.active };
 }
+
+export function resetPasswordInput(input: unknown) {
+  const raw = object(input, ["userId"]);
+
+  return {
+    userId: userId(raw.userId),
+  };
+}
+
+export function deleteUserInput(input: unknown) {
+  const raw = object(input, ["userId"]);
+
+  return {
+    userId: userId(raw.userId),
+  };
+}
+
+export function updateUserInput(input: unknown) {
+  const raw = object(input, [
+    "userId",
+    "name",
+    "loginIdentifier",
+  ]);
+
+  if (
+    typeof raw.name !== "string" ||
+    !raw.name.trim() ||
+    raw.name.length > 128 ||
+    typeof raw.loginIdentifier !== "string" ||
+    raw.loginIdentifier.length > 128
+  ) {
+    throw new UserManagementError("INVALID_INPUT");
+  }
+
+  const loginIdentifier = normalizeLoginIdentifier(
+    raw.loginIdentifier
+  );
+
+  if (!loginIdentifier) {
+    throw new UserManagementError("INVALID_INPUT");
+  }
+
+  return {
+    userId: userId(raw.userId),
+    name: raw.name.trim(),
+    loginIdentifier,
+  };
+}

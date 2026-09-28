@@ -5,7 +5,15 @@ import { test } from "node:test";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient, type Prisma } from "../src/generated/prisma/client";
 import { verifyPassword } from "../src/lib/auth/password";
-import { changeUserRole, createUser, listUsers, setUserActive } from "../src/lib/users/service";
+import {
+  changeUserRole,
+  createUser,
+  deleteUser,
+  listUsers,
+  resetUserPassword,
+  setUserActive,
+  updateUser,
+} from "../src/lib/users/service";
 
 test("Access Management PostgreSQL transactions, audits, retries and concurrent access changes", async t => {
   assert.notEqual(process.env.NODE_ENV, "production");
@@ -66,6 +74,171 @@ test("Access Management PostgreSQL transactions, audits, retries and concurrent 
       await assert.rejects(changeUserRole(db, admin, { userId: admin.id, role: "CASHIER" }), { code: "SELF_ACCESS_CHANGE" });
       await assert.rejects(changeUserRole(db, admin, { userId: randomUUID(), role: "ADMIN" }), { code: "NOT_FOUND" });
     });
+    await t.test("edit account updates name and login and rejects duplicate login", async () => {
+  const editable = await fixture("CASHIER");
+  const loginIdentifier = randomUUID();
+
+  const updated = await updateUser(db, admin, {
+    userId: editable.id,
+    name: "  Edited Cashier  ",
+    loginIdentifier: ` ${loginIdentifier.toUpperCase()} `,
+  });
+
+  assert.equal(updated.name, "Edited Cashier");
+  assert.equal(updated.loginIdentifier, loginIdentifier);
+
+  const stored = await db.user.findUniqueOrThrow({
+    where: { id: editable.id },
+  });
+
+  assert.equal(stored.name, "Edited Cashier");
+  assert.equal(stored.loginIdentifier, loginIdentifier);
+
+  const audit = await db.auditLog.findFirstOrThrow({
+    where: {
+      entityId: editable.id,
+      action: "USER_PROFILE_UPDATED",
+    },
+  });
+
+  assert.deepEqual(audit.details, {
+    before: {
+      name: "Test",
+      loginIdentifier: editable.loginIdentifier,
+    },
+    after: {
+      name: "Edited Cashier",
+      loginIdentifier,
+    },
+  });
+
+  await assert.rejects(
+    updateUser(db, admin, {
+      userId: editable.id,
+      name: "Duplicate",
+      loginIdentifier: other.loginIdentifier,
+    }),
+    { code: "DUPLICATE_LOGIN" }
+  );
+});
+
+await t.test("reset password stores Argon2 hash for Masuk123 and invalidates old password", async () => {
+  const oldPassword = "OldPassword123!";
+  const resettable = await createUser(db, admin, {
+    name: "Reset Password Test",
+    loginIdentifier: randomUUID(),
+    password: oldPassword,
+    role: "CASHIER",
+  });
+
+  ids.push(resettable.id);
+
+  await resetUserPassword(db, admin, {
+    userId: resettable.id,
+  });
+
+  const stored = await db.user.findUniqueOrThrow({
+    where: { id: resettable.id },
+  });
+
+  assert.notEqual(stored.passwordHash, "Masuk123!");
+  assert.equal(
+    await verifyPassword(stored.passwordHash, "Masuk123!"),
+    true
+  );
+  assert.equal(
+    await verifyPassword(stored.passwordHash, oldPassword),
+    false
+  );
+
+  const audit = await db.auditLog.findFirstOrThrow({
+    where: {
+      entityId: resettable.id,
+      action: "USER_PASSWORD_RESET",
+    },
+  });
+
+  assert.ok(!JSON.stringify(audit).includes("Masuk123!"));
+  assert.ok(!JSON.stringify(audit).includes(stored.passwordHash));
+});
+
+await t.test("delete account without history permanently removes user", async () => {
+  const disposable = await fixture("CASHIER");
+
+  const result = await deleteUser(db, admin, {
+    userId: disposable.id,
+  });
+
+  assert.equal(result.outcome, "DELETED");
+
+  assert.equal(
+    await db.user.count({
+      where: { id: disposable.id },
+    }),
+    0
+  );
+
+  assert.equal(
+    await db.auditLog.count({
+      where: {
+        entityId: disposable.id,
+        action: "USER_DELETED",
+      },
+    }),
+    1
+  );
+});
+
+await t.test("delete account with history archives user and self delete is rejected", async () => {
+  const archived = await fixture("CASHIER");
+
+  await db.auditLog.create({
+    data: {
+      actorId: archived.id,
+      action: "TEST_HISTORY",
+      entityType: "User",
+      entityId: archived.id,
+      details: {
+        source: "access-management-test",
+      },
+    },
+  });
+
+  const result = await deleteUser(db, admin, {
+    userId: archived.id,
+  });
+
+  assert.equal(result.outcome, "ARCHIVED");
+
+  if (result.outcome !== "ARCHIVED") {
+    assert.fail("Expected archived user");
+  }
+
+  assert.equal(result.user.active, false);
+
+  const stored = await db.user.findUniqueOrThrow({
+    where: { id: archived.id },
+  });
+
+  assert.equal(stored.active, false);
+
+  assert.equal(
+    await db.auditLog.count({
+      where: {
+        entityId: archived.id,
+        action: "USER_ARCHIVED",
+      },
+    }),
+    1
+  );
+
+  await assert.rejects(
+    deleteUser(db, admin, {
+      userId: admin.id,
+    }),
+    { code: "SELF_ACCESS_CHANGE" }
+  );
+});
     await t.test("audit failure rolls back creation and access changes", async () => {
       const broken = { $transaction: (fn: (tx: Prisma.TransactionClient) => Promise<unknown>) => db.$transaction(tx => fn(new Proxy(tx, {
         get(target, key) { return key === "auditLog" ? { create: async () => { throw new Error("audit unavailable"); } } : Reflect.get(target, key); },

@@ -1,4 +1,4 @@
-export const PASSWORD_MIN_LENGTH = 12;
+export const PASSWORD_MIN_LENGTH = 9;
 export const PASSWORD_MAX_LENGTH = 128;
 
 // Count Unicode code points; never trim or otherwise transform passwords.

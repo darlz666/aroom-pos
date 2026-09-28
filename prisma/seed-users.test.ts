@@ -30,9 +30,16 @@ test("development credentials normalize logins and reject missing/invalid inputs
         assert.throws(() => readDevelopmentUsers({ ...env, [key]: value }), new RegExp(key));
       }
     }
-    for (const value of ["x".repeat(11), "x".repeat(129)]) {
-      assert.throws(() => readDevelopmentUsers({ ...env, [`AROOM_DEV_${role}_PASSWORD`]: value }), /12 to 128/);
-    }
+    for (const value of ["x".repeat(8), "x".repeat(129)]) {
+  assert.throws(
+    () =>
+      readDevelopmentUsers({
+        ...env,
+        [`AROOM_DEV_${role}_PASSWORD`]: value,
+      }),
+    /9 to 128/
+  );
+}
   }
   assert.throws(() => readDevelopmentUsers({ ...env, NODE_ENV: "production" }), /production/);
   assert.throws(() => readDevelopmentUsers({ ...env, AROOM_DEV_CASHIER_LOGIN: env.AROOM_DEV_ADMIN_LOGIN }), /distinct/);

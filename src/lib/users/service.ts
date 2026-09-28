@@ -1,9 +1,20 @@
 import "server-only";
 import { Prisma, type PrismaClient } from "../../generated/prisma/client";
 import { hashPassword } from "../auth/password";
-import { changeRoleInput, createUserInput, setActiveInput, UserManagementError, type ManagedUser, type UserActor } from "./domain";
+import {
+  changeRoleInput,
+  createUserInput,
+  deleteUserInput,
+  resetPasswordInput,
+  setActiveInput,
+  updateUserInput,
+  UserManagementError,
+  type ManagedUser,
+  type UserActor,
+} from "./domain";
 
 const select = { id: true, name: true, loginIdentifier: true, role: true, active: true } as const;
+const DEFAULT_RESET_PASSWORD = "Masuk123!";
 // Explicit projection also protects callers when a test adapter returns extra fields.
 function dto(user: ManagedUser): ManagedUser {
   return { id: user.id, name: user.name, loginIdentifier: user.loginIdentifier, role: user.role, active: user.active };
@@ -74,4 +85,226 @@ export async function setUserActive(db: PrismaClient, actor: UserActor, input: u
   await assertAdmin(db, actor);
   const value = setActiveInput(input);
   return updateAccess(db, actor, value.userId, { active: value.active });
+}
+
+export async function resetUserPassword(
+  db: PrismaClient,
+  actor: UserActor,
+  input: unknown
+) {
+  await assertAdmin(db, actor);
+
+  const { userId } = resetPasswordInput(input);
+  const passwordHash = await hashPassword(DEFAULT_RESET_PASSWORD);
+
+  return mutate(db, actor, async tx => {
+    const before = await tx.user.findUnique({
+      where: { id: userId },
+      select,
+    });
+
+    if (!before) {
+      throw new UserManagementError("NOT_FOUND");
+    }
+
+    const user = await tx.user.update({
+      where: { id: userId },
+      data: { passwordHash },
+      select,
+    });
+
+    await tx.auditLog.create({
+      data: {
+        actorId: actor.id,
+        action: "USER_PASSWORD_RESET",
+        entityType: "User",
+        entityId: user.id,
+        details: {
+          role: user.role,
+          active: user.active,
+        },
+      },
+    });
+
+    return dto(user);
+  });
+}
+
+export async function deleteUser(
+  db: PrismaClient,
+  actor: UserActor,
+  input: unknown
+) {
+  await assertAdmin(db, actor);
+
+  const { userId } = deleteUserInput(input);
+
+  return mutate(db, actor, async tx => {
+    if (userId === actor.id) {
+      throw new UserManagementError("SELF_ACCESS_CHANGE");
+    }
+
+    const before = await tx.user.findUnique({
+      where: { id: userId },
+      select,
+    });
+
+    if (!before) {
+      throw new UserManagementError("NOT_FOUND");
+    }
+
+    const [
+      shifts,
+      orders,
+      auditLogs,
+      stockMovements,
+      stockIns,
+    ] = await Promise.all([
+      tx.shift.count({ where: { cashierId: userId } }),
+      tx.order.count({ where: { cashierId: userId } }),
+      tx.auditLog.count({ where: { actorId: userId } }),
+      tx.stockMovement.count({ where: { actorId: userId } }),
+      tx.stockIn.count({ where: { actorId: userId } }),
+    ]);
+
+    const hasHistory =
+      shifts > 0 ||
+      orders > 0 ||
+      auditLogs > 0 ||
+      stockMovements > 0 ||
+      stockIns > 0;
+
+    if (hasHistory) {
+      const user = before.active
+        ? await tx.user.update({
+            where: { id: userId },
+            data: { active: false },
+            select,
+          })
+        : before;
+
+      await tx.auditLog.create({
+        data: {
+          actorId: actor.id,
+          action: "USER_ARCHIVED",
+          entityType: "User",
+          entityId: userId,
+          details: {
+            before: {
+              role: before.role,
+              active: before.active,
+            },
+            after: {
+              role: user.role,
+              active: false,
+            },
+            history: {
+              shifts,
+              orders,
+              auditLogs,
+              stockMovements,
+              stockIns,
+            },
+          },
+        },
+      });
+
+      return {
+        outcome: "ARCHIVED" as const,
+        user: dto(user),
+      };
+    }
+
+    await tx.user.delete({
+      where: { id: userId },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        actorId: actor.id,
+        action: "USER_DELETED",
+        entityType: "User",
+        entityId: userId,
+        details: {
+          name: before.name,
+          loginIdentifier: before.loginIdentifier,
+          role: before.role,
+        },
+      },
+    });
+
+    return {
+      outcome: "DELETED" as const,
+      userId,
+    };
+  });
+}
+
+export async function updateUser(
+  db: PrismaClient,
+  actor: UserActor,
+  input: unknown
+) {
+  await assertAdmin(db, actor);
+
+  const value = updateUserInput(input);
+
+  try {
+    return await mutate(db, actor, async tx => {
+      const before = await tx.user.findUnique({
+        where: { id: value.userId },
+        select,
+      });
+
+      if (!before) {
+        throw new UserManagementError("NOT_FOUND");
+      }
+
+      if (
+        before.name === value.name &&
+        before.loginIdentifier === value.loginIdentifier
+      ) {
+        return dto(before);
+      }
+
+      const user = await tx.user.update({
+        where: { id: value.userId },
+        data: {
+          name: value.name,
+          loginIdentifier: value.loginIdentifier,
+        },
+        select,
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorId: actor.id,
+          action: "USER_PROFILE_UPDATED",
+          entityType: "User",
+          entityId: user.id,
+          details: {
+            before: {
+              name: before.name,
+              loginIdentifier: before.loginIdentifier,
+            },
+            after: {
+              name: user.name,
+              loginIdentifier: user.loginIdentifier,
+            },
+          },
+        },
+      });
+
+      return dto(user);
+    });
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      throw new UserManagementError("DUPLICATE_LOGIN");
+    }
+
+    throw error;
+  }
 }

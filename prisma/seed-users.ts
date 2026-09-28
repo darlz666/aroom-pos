@@ -29,7 +29,9 @@ export function readDevelopmentUsers(env: NodeJS.ProcessEnv = process.env) {
     const loginIdentifier = normalizeLoginIdentifier(required("LOGIN"));
     const password = required("PASSWORD");
     if (!validatePassword(password)) {
-      throw new DevelopmentUserSeedError(`AROOM_DEV_${role}_PASSWORD must contain 12 to 128 characters.`);
+      throw new DevelopmentUserSeedError(
+        `AROOM_DEV_${role}_PASSWORD must contain 9 to 128 characters.`
+      );
     }
     return { id: developmentUserIds[role], role, name, loginIdentifier, password };
   });

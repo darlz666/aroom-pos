@@ -5,7 +5,7 @@ import { validatePassword } from "./password-validation";
 
 export async function hashPassword(password: string): Promise<string> {
   if (!validatePassword(password)) {
-    throw new Error("Password must contain 12 to 128 characters.");
+    throw new Error("Password must contain 9 to 128 characters.");
   }
 
   // The library defaults to Argon2id and generates a fresh salt. Keep its costs.
