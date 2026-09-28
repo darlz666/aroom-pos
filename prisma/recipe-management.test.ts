@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Prisma, PrismaClient } from "../src/generated/prisma/client";
-import { getRecipe, listRecipeOptions, saveRecipe } from "../src/lib/inventory/recipe-service";
+import { createMenu, getRecipe, listRecipeOptions, saveRecipe } from "../src/lib/inventory/recipe-service";
 import { createStockIn, createSupplier, getRecipeHpp, listIngredients } from "../src/lib/inventory/service";
 
 test("7F recipe management PostgreSQL integrity, concurrency, authorization and costing", async t => {
@@ -26,6 +26,77 @@ test("7F recipe management PostgreSQL integrity, concurrency, authorization and 
     const unchanged = async () => ({ ingredients: await db.ingredient.findMany({ where: { id: { in: [oat.id, unknown.id] } }, orderBy: { id: "asc" } }),
       product: await db.product.findUniqueOrThrow({ where: { id: p.id } }), movements: await db.stockMovement.count(), orders: await db.order.findMany({ include: { items: true, payments: true } }) });
     const original = await unchanged();
+
+    const menuRequest = () => ({ idempotencyKey: randomUUID(), categoryId: category.id, name: `Menu ${randomUUID()}`, price: 24000,
+      items: [{ ingredientId: oat.id, quantity: "100", unit: "ml" }] });
+    await t.test("ADMIN menu creation commits once under concurrent retries and appears in the POS catalog", async () => {
+      const input = menuRequest();
+      const results = await Promise.all([createMenu(db, admin, input), createMenu(db, admin, input)]);
+      assert.equal(results[0].productId, results[1].productId); assert.equal(results.filter(row => row.replayed).length, 1);
+      const created = await db.product.findUniqueOrThrow({ where: { id: results[0].productId }, include: { recipe: { include: { items: true } } } });
+      assert.equal(created.active, true); assert.equal(created.available, true); assert.equal(created.price, 24000);
+      assert.equal(created.recipe?.items[0].quantity.toFixed(), "100"); assert.equal(created.recipe?.revision, 1);
+      assert.equal(await db.product.count({ where: { name: input.name } }), 1);
+      assert.equal(await db.auditLog.count({ where: { id: input.idempotencyKey } }), 1);
+      // The same active category/product filters and recipe relations used by /pos.
+      const catalog = await db.category.findMany({ where: { active: true }, select: { id: true,
+        products: { where: { active: true }, select: { id: true, name: true, price: true, available: true,
+          recipe: { select: { items: { select: { quantity: true, unit: true, ingredient: { select: { currentStock: true, baseUnit: true } } } } } } } } } });
+      assert.ok(catalog.find(row => row.id === category.id)?.products.some(row => row.id === created.id && row.available && row.price === 24000 && row.recipe?.items.length === 1));
+      await saveRecipe(db, admin, request(created.id, 1, "120"));
+      const afterEdit = await getRecipe(db, admin, created.id);
+      assert.equal((await createMenu(db, admin, input)).replayed, true);
+      assert.deepEqual(await getRecipe(db, admin, created.id), afterEdit);
+      for (const patch of [{ name: "changed" }, { price: 1 }, { categoryId: randomUUID() }, { items: [{ ...input.items[0], quantity: "1" }] }]) {
+        await assert.rejects(createMenu(db, admin, { ...input, ...patch }), { code: "IDEMPOTENCY_CONFLICT" });
+      }
+      await assert.rejects(createMenu(db, await user("ADMIN"), input), { code: "IDEMPOTENCY_CONFLICT" });
+      assert.deepEqual(await unchanged(), original);
+    });
+    await t.test("menu creation rejects unauthorized actors and invalid references without any writes", async () => {
+      const input = menuRequest(), count = await db.product.count(), auditCount = await db.auditLog.count();
+      for (const actor of [stock, finance, cashier, { ...stock, role: "ADMIN" as const }, { ...admin, id: randomUUID() }]) {
+        await assert.rejects(createMenu(db, actor, input), { code: "FORBIDDEN" });
+      }
+      const staleAdmin = await user("ADMIN");
+      await db.user.update({ where: { id: staleAdmin.id }, data: { active: false } });
+      await assert.rejects(createMenu(db, staleAdmin, input), { code: "FORBIDDEN" });
+      await db.user.update({ where: { id: staleAdmin.id }, data: { active: true, role: "STOCK_MANAGEMENT" } });
+      await assert.rejects(createMenu(db, staleAdmin, input), { code: "FORBIDDEN" });
+      const inactiveCategory = await db.category.create({ data: { name: randomUUID(), active: false } });
+      const inactive = await db.ingredient.create({ data: { name: randomUUID(), baseUnit: "ml", active: false } });
+      for (const [patch, code] of [
+        [{ categoryId: randomUUID() }, "INVALID_INPUT"], [{ categoryId: inactiveCategory.id }, "INVALID_INPUT"],
+        [{ items: [{ ...input.items[0], ingredientId: randomUUID() }] }, "INGREDIENT_NOT_FOUND"],
+        [{ items: [{ ...input.items[0], ingredientId: inactive.id }] }, "INGREDIENT_INACTIVE"],
+        [{ items: [{ ...input.items[0], unit: "g" }] }, "INCOMPATIBLE_UNIT"],
+        [{ items: [{ ...input.items[0], quantity: "999999999999999" }] }, "INVALID_COST"],
+      ] as const) await assert.rejects(createMenu(db, admin, { ...input, ...patch }), { code });
+      assert.equal(await db.product.count(), count); assert.equal(await db.auditLog.count(), auditCount);
+      assert.deepEqual(await unchanged(), original);
+    });
+    await t.test("menu creation rolls back Product and Recipe on later failures; unknown WAC is allowed", async () => {
+      for (const failedModel of ["recipe", "auditLog"] as const) {
+        const broken = { $transaction: (fn: (tx: Prisma.TransactionClient) => Promise<unknown>) => db.$transaction(tx => fn(new Proxy(tx, {
+          get(target, key) {
+            if (key !== failedModel) return Reflect.get(target, key);
+            return new Proxy(target[failedModel], { get(model, method) {
+              if (method === "create") return async () => { throw new Error("injected menu failure"); };
+              return Reflect.get(model, method);
+            } });
+          },
+        }))) } as unknown as PrismaClient;
+        const input = menuRequest(), recipes = await db.recipe.count();
+        await assert.rejects(createMenu(broken, admin, input), /injected menu failure/);
+        assert.equal(await db.product.count({ where: { name: input.name } }), 0);
+        assert.equal(await db.recipe.count(), recipes); assert.equal(await db.auditLog.count({ where: { id: input.idempotencyKey } }), 0);
+        await createMenu(db, admin, input);
+      }
+      const input = { ...menuRequest(), items: [{ ingredientId: unknown.id, quantity: "1", unit: "pcs" }] };
+      const created = await createMenu(db, admin, input);
+      assert.equal((await getRecipe(db, admin, created.productId)).total, null);
+      assert.deepEqual(await unchanged(), original);
+    });
 
     await t.test("inactive/unavailable products accept recipes; repeated concurrent saves commit once", async () => {
       assert.equal((await getRecipe(db, finance, p.id)).recipeId, null);

@@ -18,3 +18,41 @@ export function withRecipeAccess<T>(db: PrismaClient, actor: RecipeActor, write:
     return work(tx);
   }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
 }
+
+/** Creating a POS menu changes catalog and selling price, so ADMIN only. */
+export function withRecipeAdminAccess<T>(
+  db: PrismaClient,
+  actor: RecipeActor,
+  work: (tx: Prisma.TransactionClient) => Promise<T>
+) {
+  return db.$transaction(async tx => {
+    if (!actor || actor.role !== "ADMIN") {
+      throw new InventoryError("FORBIDDEN");
+    }
+
+    const id = inventoryId(actor.id);
+
+    await tx.$queryRaw`
+      SELECT id
+      FROM "User"
+      WHERE id = ${id}::uuid
+      FOR SHARE
+    `;
+
+    const current = await tx.user.findUnique({
+      where: { id },
+      select: {
+        role: true,
+        active: true,
+      },
+    });
+
+    if (!current?.active || current.role !== "ADMIN") {
+      throw new InventoryError("FORBIDDEN");
+    }
+
+    return work(tx);
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+  });
+}

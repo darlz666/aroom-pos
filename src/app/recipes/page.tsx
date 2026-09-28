@@ -23,7 +23,14 @@ export default async function RecipesPage() {
           <form action={logout}><button type="submit" className="min-h-14 rounded-lg border px-5">Logout</button></form>
         </nav>
       </header>
-      <RecipeWorkspace key={actor.id} actorId={actor.id} canEdit={actor.role === "ADMIN" || actor.role === "STOCK_MANAGEMENT"} initial={initial} />
+      <RecipeWorkspace
+        key={actor.id}
+        actorId={actor.id}
+        canEdit={actor.role === "ADMIN" || actor.role === "STOCK_MANAGEMENT"}
+        canCreateMenu={actor.role === "ADMIN"}
+        canDeleteMenu={actor.role === "ADMIN"}
+        initial={initial}
+      />
     </div>
   </main>;
 }

@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { getRecipeAction, listRecipeOptionsAction, saveRecipeAction } from "@/lib/inventory/recipe-actions";
-import { formatWac, recipeRecoveryKey, restoreRecipeSubmission, type RecipeSubmission } from "@/lib/inventory/recipe-form";
+import { createMenuAction, deleteMenuAction, getRecipeAction, listRecipeOptionsAction, saveRecipeAction } from "@/lib/inventory/recipe-actions";
+import { formatWac, menuDeleteRecoveryKey, recipeRecoveryKey, restoreMenuDeleteSubmission, restoreMenuSubmission, restoreRecipeMutation, restoreRecipeSubmission, type MenuDeleteSubmission, type RecipeMutation, type RecipeSubmission } from "@/lib/inventory/recipe-form";
 import { card, control, primary, quantity, rupiah } from "../inventory/presentation";
 
 type Options = Awaited<ReturnType<typeof listRecipeOptionsAction>>;
@@ -15,6 +15,7 @@ const errors: Record<string, string> = {
   INVALID_COST: "HPP melebihi batas biaya yang didukung. Periksa jumlah resep.",
   DUPLICATE_INGREDIENT: "Setiap bahan hanya boleh muncul satu kali.",
   FORBIDDEN: "Akses Anda telah berubah. Masuk kembali dengan akun yang berwenang.",
+  PRODUCT_NOT_FOUND: "Menu tidak ditemukan. Muat ulang daftar produk.",
 };
 const readError = "Data belum dapat dimuat. Periksa koneksi dan akses, lalu muat ulang.";
 
@@ -27,24 +28,71 @@ function recipeUnits(baseUnit: string) {
   return [];
 }
 
-export function RecipeWorkspace({ actorId, canEdit, initial }: { actorId: string; canEdit: boolean; initial: Options }) {
+export function RecipeWorkspace({
+  actorId,
+  canEdit,
+  canCreateMenu = false,
+  canDeleteMenu = false,
+  initial,
+}: {
+  actorId: string;
+  canEdit: boolean;
+  canCreateMenu?: boolean;
+  canDeleteMenu?: boolean;
+  initial: Options;
+}) {
   const [options, setOptions] = useState(initial);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [menuName, setMenuName] = useState("");
+  const [categoryId, setCategoryId] = useState("");
+  const [price, setPrice] = useState("");
   const [detail, setDetail] = useState<Detail | null>(null);
   const [items, setItems] = useState<RecipeSubmission["items"]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [ready, setReady] = useState(false);
-  const [pending, setPending] = useState<RecipeSubmission | null>(null);
+  const [pending, setPending] = useState<RecipeMutation | null>(null);
   const [blocked, setBlocked] = useState(false);
   const [message, setMessage] = useState("");
   const [mustReload, setMustReload] = useState(false);
-  const intent = useRef<RecipeSubmission | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ productId: string; name: string } | null>(null);
+  const [deletePending, setDeletePending] = useState<MenuDeleteSubmission | null>(null);
+  const deleteIntent = useRef<MenuDeleteSubmission | null>(null);
+  const deleteDialog = useRef<HTMLDialogElement>(null);
+  const showDeleteDialog = !!deleteTarget && canDeleteMenu;
+  const intent = useRef<RecipeMutation | null>(null);
   const busy = useRef(false);
   const reads = useRef(0);
   const mounted = useRef(true);
+  const createDialog = useRef<HTMLDialogElement>(null);
+  const showCreateDialog = creating && canCreateMenu;
   const key = recipeRecoveryKey(actorId);
+  const deleteKey = menuDeleteRecoveryKey(actorId);
+
+  useEffect(() => {
+    if (!showDeleteDialog || !deleteDialog.current) return;
+    const dialog = deleteDialog.current;
+    const previousOverflow = document.body.style.overflow;
+    dialog.showModal();
+    dialog.querySelector<HTMLButtonElement>("button")?.focus();
+    document.body.style.overflow = "hidden";
+    return () => { dialog.close(); document.body.style.overflow = previousOverflow; };
+  }, [showDeleteDialog]);
+
+  useEffect(() => {
+    if (!showCreateDialog || !createDialog.current) return;
+    const dialog = createDialog.current;
+    const previousOverflow = document.body.style.overflow;
+    dialog.showModal();
+    dialog.querySelector<HTMLInputElement>("input")?.focus();
+    document.body.style.overflow = "hidden";
+    return () => {
+      dialog.close();
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [showCreateDialog]);
 
   useEffect(() => {
     mounted.current = true;
@@ -56,19 +104,31 @@ export function RecipeWorkspace({ actorId, canEdit, initial }: { actorId: string
       if (cancelled) return;
       try {
         const stored = sessionStorage.getItem(key);
+        const storedDelete = sessionStorage.getItem(deleteKey);
+        if (stored && storedDelete) throw new Error("Conflicting recovery data");
+        if (storedDelete) {
+          const request = restoreMenuDeleteSubmission(storedDelete);
+          deleteIntent.current = request; setDeletePending(request);
+          setDeleteTarget({ productId: request.productId, name: "Menu dari permintaan tersimpan" });
+          setMessage("Status penghapusan belum pasti. Periksa dengan permintaan yang sama.");
+        }
         if (stored) {
-          const request = restoreRecipeSubmission(stored);
-          intent.current = request; setPending(request); setSelected(request.productId); setItems(request.items);
+          const request = restoreRecipeMutation(stored);
+          intent.current = request; setPending(request); setItems(request.items);
+          if ("productId" in request) setSelected(request.productId);
+          else {
+            setCreating(true); setMenuName(request.name); setCategoryId(request.categoryId); setPrice(String(request.price));
+          }
           setMessage("Status penyimpanan belum pasti. Periksa dengan permintaan yang sama.");
         }
       } catch { setBlocked(true); setMessage("Data pemulihan tidak dapat dibaca. Jangan mengirim resep pengganti dari tab ini."); }
       setReady(true);
     }
     void restore();
-    const leaving = (event: BeforeUnloadEvent) => { if (intent.current) { event.preventDefault(); event.returnValue = ""; } };
+    const leaving = (event: BeforeUnloadEvent) => { if (intent.current || deleteIntent.current) { event.preventDefault(); event.returnValue = ""; } };
     window.addEventListener("beforeunload", leaving);
     return () => { cancelled = true; mounted.current = false; window.removeEventListener("beforeunload", leaving); };
-  }, [key]);
+  }, [key, deleteKey]);
 
   async function read(productId: string, refreshOptions = false) {
     const sequence = ++reads.current;
@@ -91,8 +151,9 @@ export function RecipeWorkspace({ actorId, canEdit, initial }: { actorId: string
     finally { if (mounted.current && sequence === reads.current) setLoading(false); }
   }
 
-  async function send(request: RecipeSubmission, recovering: boolean) {
-    if (busy.current || !canEdit || !mounted.current) return;
+  async function send(request: RecipeMutation, recovering: boolean) {
+    const isCreate = !("productId" in request);
+    if (busy.current || deleteTarget || deleteIntent.current || !(isCreate ? canCreateMenu : canEdit) || !mounted.current) return;
     if (!navigator.onLine) { setMessage("Tidak ada koneksi. Sambungkan kembali sebelum menyimpan."); return; }
     busy.current = true; setSaving(true); ++reads.current;
     try {
@@ -103,14 +164,17 @@ export function RecipeWorkspace({ actorId, canEdit, initial }: { actorId: string
     }
     intent.current = request; setPending(request);
     try {
-      const result = await saveRecipeAction(request);
+      const result = "productId" in request ? await saveRecipeAction(request) : await createMenuAction(request);
       if (!mounted.current) return;
       if (result.success) {
         sessionStorage.removeItem(key); intent.current = null; setPending(null);
-        const refreshed = await read(request.productId, true);
+        const productId = "created" in result ? result.created.productId : result.saved.productId;
+        const selectedId = "productId" in request ? request.productId : productId;
+        setCreating(false); setSelected(selectedId);
+        const refreshed = await read(selectedId, true);
         if (mounted.current) setMessage(refreshed
-          ? "Resep tersimpan. HPP menggunakan WAC saat ini; muat ulang untuk memperbarui estimasi."
-          : "Resep tersimpan, tetapi data terbaru belum dapat dimuat. Muat ulang resep & WAC.");
+          ? isCreate ? "Menu dan resep tersimpan. Produk aktif tersedia di data POS." : "Resep tersimpan. HPP menggunakan WAC saat ini; muat ulang untuk memperbarui estimasi."
+          : isCreate ? "Menu dan resep tersimpan, tetapi data terbaru belum dapat dimuat. Muat ulang resep & WAC." : "Resep tersimpan, tetapi data terbaru belum dapat dimuat. Muat ulang resep & WAC.");
       } else if (result.code === "UNAVAILABLE" || (recovering && result.code !== "STALE_RECIPE")) {
         setMessage("Status penyimpanan belum pasti. Periksa dengan permintaan yang sama.");
       } else {
@@ -124,43 +188,119 @@ export function RecipeWorkspace({ actorId, canEdit, initial }: { actorId: string
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!canEdit || busy.current || intent.current || !detail || !ready || blocked || loading || mustReload) return;
-    let request: RecipeSubmission;
-    try { request = restoreRecipeSubmission(JSON.stringify({ productId: detail.productId, expectedRevision: detail.revision, idempotencyKey: crypto.randomUUID(), items })); }
-    catch { setMessage("Periksa bahan dan jumlah positif dengan maksimal 3 angka desimal."); return; }
+    if (!(creating ? canCreateMenu : canEdit) || busy.current || intent.current || deleteTarget || deleteIntent.current || (!creating && !detail) || !ready || blocked || loading || mustReload || !options.success) return;
+    let request: RecipeMutation;
+    try {
+      if (creating) {
+        if (!/^\d+$/.test(price)) throw new Error("Invalid price");
+        request = restoreMenuSubmission(JSON.stringify({ name: menuName.trim(), categoryId, price: Number(price), idempotencyKey: crypto.randomUUID(), items }));
+      } else request = restoreRecipeSubmission(JSON.stringify({ productId: detail!.productId, expectedRevision: detail!.revision, idempotencyKey: crypto.randomUUID(), items }));
+    }
+    catch { setMessage(creating ? "Periksa nama, kategori, harga rupiah bulat positif, dan bahan dengan jumlah positif maksimal 3 angka desimal." : "Periksa bahan dan jumlah positif dengan maksimal 3 angka desimal."); return; }
     await send(request, false);
   }
-  const locked = saving || !!pending || blocked || !ready;
+  async function sendDelete(request: MenuDeleteSubmission, recovering: boolean) {
+    if (!canDeleteMenu || !mounted.current || busy.current || intent.current || blocked || !ready || creating
+      || (!recovering && deleteIntent.current) || (recovering && deleteIntent.current !== request)) return;
+    if (!navigator.onLine) { setMessage("Tidak ada koneksi. Sambungkan kembali sebelum menghapus menu."); return; }
+    busy.current = true; setSaving(true); ++reads.current;
+    try { sessionStorage.setItem(deleteKey, JSON.stringify(request)); }
+    catch {
+      busy.current = false; setSaving(false); setMessage("Penyimpanan pemulihan tidak tersedia. Menu belum dihapus."); return;
+    }
+    deleteIntent.current = request; setDeletePending(request);
+    try {
+      const result = await deleteMenuAction(request);
+      if (!mounted.current) return;
+      if (result.success) {
+        sessionStorage.removeItem(deleteKey); deleteIntent.current = null; setDeletePending(null);
+        setDeleteTarget(null); setSelected(""); setDetail(null); setItems([]); setMustReload(false);
+        const successMessage = result.deleted.outcome === "DELETED"
+          ? "Menu berhasil dihapus." : "Menu dinonaktifkan karena memiliki riwayat transaksi.";
+        setMessage(successMessage); setLoading(true);
+        // Clear stale options on refresh failure; never offer a removed product as current data.
+        let choices: Options;
+        try { choices = await listRecipeOptionsAction(); }
+        catch { choices = { success: false, code: "UNAVAILABLE" }; }
+        if (!mounted.current) return;
+        setOptions(choices);
+        if (!choices.success) setMessage(`${successMessage} Daftar produk belum dapat dimuat. Muat ulang resep & WAC.`);
+      } else if (result.code === "UNAVAILABLE" || recovering) {
+        setMessage("Status penghapusan belum pasti. Periksa dengan permintaan yang sama.");
+      } else {
+        sessionStorage.removeItem(deleteKey); deleteIntent.current = null; setDeletePending(null);
+        setMessage(errors[result.code] ?? "Penghapusan ditolak. Periksa data dan akses Anda.");
+      }
+    } catch { if (mounted.current) setMessage("Status penghapusan belum pasti. Periksa dengan permintaan yang sama."); }
+    finally { busy.current = false; if (mounted.current) { setSaving(false); setLoading(false); } }
+  }
+  const cancelDelete = () => {
+    if (busy.current || deleteIntent.current) return;
+    setDeleteTarget(null); setMessage("");
+  };
+  const locked = saving || !!pending || !!deleteTarget || !!deletePending || blocked || !ready;
   const editingDisabled = locked || loading || mustReload || !options.success;
   const update = (index: number, patch: Partial<RecipeSubmission["items"][number]>) => {
-    if (editingDisabled || !canEdit) return;
+    if (editingDisabled || !(creating ? canCreateMenu : canEdit)) return;
     setItems(current => current.map((item, i) => i === index ? { ...item, ...patch } : item));
   };
+  const cancelCreate = () => {
+    if (locked || busy.current || intent.current) return;
+    setCreating(false); setItems([]); setMessage("");
+  };
+  const Content = showCreateDialog ? "dialog" : "div";
   return <div className="space-y-5">
     {!canEdit && <p className={card}>Akses baca saja untuk resep, HPP, dan biaya bahan.</p>}
     <div className="flex flex-wrap items-end gap-4">
       <label className="flex flex-col gap-2">Cari produk<input className={control} value={search} onChange={e => setSearch(e.target.value)} /></label>
-      <label className="flex min-w-64 flex-1 flex-col gap-2">Produk POS<select className={control} value={selected} disabled={locked || !options.success}
-        onChange={e => { if (locked) return; setSelected(e.target.value); void read(e.target.value); }}>
+      <label className="flex min-w-64 flex-1 flex-col gap-2">Produk POS<select className={control} value={selected} disabled={locked || creating || !options.success}
+        onChange={e => { if (locked || creating) return; setSelected(e.target.value); void read(e.target.value); }}>
         <option value="">Pilih produk</option>
         {options.success && options.products.filter(product => product.id === selected || product.name.toLowerCase().includes(search.toLowerCase())).map(product =>
           <option key={product.id} value={product.id}>{product.name}{!product.active ? " · Nonaktif" : !product.available ? " · Tidak tersedia" : ""}{product.recipe ? " · Ada resep" : " · Belum ada resep"}</option>)}
       </select></label>
-      <button className={control} disabled={locked} onClick={() => void read(selected, true)}>Muat ulang resep &amp; WAC</button>
+      <button className={control} disabled={locked || creating} onClick={() => void read(selected, true)}>Muat ulang resep &amp; WAC</button>
+      {canCreateMenu && <button className={primary} disabled={locked || creating || loading || mustReload || !options.success} onClick={() => {
+        if (locked || creating || loading || mustReload || !options.success) return;
+        ++reads.current; setCreating(true); setSelected(""); setDetail(null); setItems([{ ingredientId: "", quantity: "", unit: "" }]);
+        setMenuName(""); setCategoryId(""); setPrice(""); setMessage("");
+      }}>Tambah Menu</button>}
+      {canDeleteMenu && !creating && <button type="button" className={`${control} border-red-700 text-red-800`}
+        disabled={locked || loading || mustReload || !options.success || !detail || selected !== detail.productId}
+        onClick={() => {
+          if (locked || busy.current || intent.current || loading || mustReload || !options.success || !detail || selected !== detail.productId) return;
+          setDeleteTarget({ productId: detail.productId, name: detail.productName }); setMessage("");
+        }}>Hapus Menu</button>}
     </div>
+    <Content ref={(node: HTMLDialogElement | HTMLDivElement | null) => { createDialog.current = node instanceof HTMLDialogElement ? node : null; }}
+      aria-labelledby={showCreateDialog ? "create-menu-title" : undefined}
+      className={showCreateDialog
+        ? "fixed inset-0 m-auto max-h-[90dvh] w-[calc(100%-2rem)] max-w-3xl space-y-5 overflow-y-auto overscroll-contain rounded-2xl border border-[#dedfd5] bg-[#fffefa] p-5 text-[#263020] shadow-xl backdrop:bg-black/50 sm:p-6"
+        : "space-y-5"}
+      onCancel={event => { event.preventDefault(); cancelCreate(); }}>
     {!options.success && <p role="alert">{readError}</p>}
-    {message && <p role="status" className={card}>{message}</p>}
+    {message && !showDeleteDialog && <p role="status" className={card}>{message}</p>}
     {pending && <section className={card}><h2 className="text-xl font-semibold">Penyimpanan perlu diperiksa</h2>
       <p>Isian terkunci sampai server memastikan hasil. Permintaan tersimpan tetap memakai produk dan jumlah semula.</p>
-      {canEdit && <button className={`${primary} mt-3`} disabled={saving} onClick={() => intent.current && void send(intent.current, true)}>Periksa / coba lagi</button>}
+      {("productId" in pending ? canEdit : canCreateMenu) && <button className={`${primary} mt-3`} disabled={saving} onClick={() => intent.current && void send(intent.current, true)}>Periksa / coba lagi</button>}
     </section>}
     {loading && <p role="status">Memuat resep dan WAC…</p>}
-    {detail && !loading && <div className="grid gap-5 lg:grid-cols-[minmax(0,3fr)_minmax(18rem,2fr)]">
-      <section className={card}><h2 className="mb-4 text-2xl font-semibold">{detail.productName}</h2>
-        {!detail.productActive && <p>Produk nonaktif</p>}{!detail.productAvailable && <p>Produk tidak tersedia di POS</p>}
-        {!detail.recipeId && <p className="mb-4">Belum ada resep.</p>}
-        {canEdit ? <form onSubmit={submit}>
+    {(detail || showCreateDialog) && !loading && <div className={creating ? "space-y-5" : "grid gap-5 lg:grid-cols-[minmax(0,3fr)_minmax(18rem,2fr)]"}>
+      <section className={creating ? "" : card}><h2 id={creating ? "create-menu-title" : undefined} className="mb-4 text-2xl font-semibold">{creating ? "Tambah Menu" : detail?.productName}</h2>
+        {detail && <>{!detail.productActive && <p>Produk nonaktif</p>}{!detail.productAvailable && <p>Produk tidak tersedia di POS</p>}
+        {!detail.recipeId && <p className="mb-4">Belum ada resep.</p>}</>}
+        {(creating ? canCreateMenu : canEdit) ? <form onSubmit={submit}>
           <fieldset disabled={editingDisabled} className="space-y-4">
+            {creating && <>
+              <p>Menu baru disimpan aktif dan tersedia di POS bersama resepnya.</p>
+              <label className="flex flex-col gap-2">Nama menu<input required maxLength={128} className={control} value={menuName} onChange={e => { if (!editingDisabled) setMenuName(e.target.value); }} /></label>
+              <label className="flex flex-col gap-2">Kategori<select required className={control} value={categoryId} onChange={e => { if (!editingDisabled) setCategoryId(e.target.value); }}>
+                <option value="">Pilih kategori</option>
+                {options.success && options.categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}
+              </select></label>
+              {options.success && !options.categories.length && <p role="alert">Belum ada kategori aktif. Siapkan kategori aktif sebelum menambah menu.</p>}
+              <label className="flex flex-col gap-2">Harga jual (Rp)<input required inputMode="numeric" pattern="[0-9]+" className={control} value={price} onChange={e => { if (!editingDisabled) setPrice(e.target.value); }} /></label>
+            </>}
             {items.map((item, index) => <div key={index} className="flex flex-wrap items-end gap-3 rounded-lg border border-[#dedfd5] p-3">
               <label className="flex min-w-48 flex-1 flex-col gap-2">Bahan {index + 1}<select required className={control} value={item.ingredientId} onChange={e => {
                 const ingredient = options.success ? options.ingredients.find(row => row.id === e.target.value) : undefined;
@@ -199,11 +339,12 @@ export function RecipeWorkspace({ actorId, canEdit, initial }: { actorId: string
               <button type="button" className={control} onClick={() => { if (!editingDisabled) setItems(current => current.filter((_, i) => i !== index)); }}>Hapus bahan {index + 1}</button>
             </div>)}
             <div className="flex flex-wrap gap-3"><button type="button" className={control} disabled={items.length >= 100} onClick={() => { if (!editingDisabled) setItems(current => [...current, { ingredientId: "", quantity: "", unit: "" }]); }}>Tambah bahan</button>
-              <button type="submit" className={primary} disabled={!items.length}>Simpan resep</button></div>
+              <button type="submit" className={primary} disabled={!items.length || (creating && (!options.success || !options.categories.length))}>{creating ? "Simpan menu & resep" : "Simpan resep"}</button></div>
           </fieldset>
-        </form> : <ul className="space-y-3">{detail.items.map(item => <li key={item.ingredientId}>{item.ingredientName}{!item.active ? " · Nonaktif" : ""}: {quantity(item.quantity)} {item.unit}</li>)}</ul>}
+          {creating && <button type="button" className={`${control} mt-4`} disabled={locked} onClick={cancelCreate}>Batal tambah menu</button>}
+        </form> : <ul className="space-y-3">{detail?.items.map(item => <li key={item.ingredientId}>{item.ingredientName}{!item.active ? " · Nonaktif" : ""}: {quantity(item.quantity)} {item.unit}</li>)}</ul>}
       </section>
-      <section className={card}><h2 className="text-xl font-semibold">HPP resep tersimpan</h2>
+      {detail && <section className={card}><h2 className="text-xl font-semibold">HPP resep tersimpan</h2>
         <p className="mb-5 text-sm text-[#62685c]">Estimasi otomatis dari jumlah resep tersimpan × WAC saat dibaca. Simpan perubahan untuk menghitung ulang.</p>
         <p className="mb-5 text-3xl font-semibold">{detail.available ? rupiah(detail.total!) : "HPP belum tersedia"}</p>
         {detail.costError && <p role="alert">HPP melebihi batas biaya yang didukung. Periksa jumlah resep.</p>}
@@ -212,7 +353,27 @@ export function RecipeWorkspace({ actorId, canEdit, initial }: { actorId: string
           <p>{quantity(item.quantity)} {item.unit} × {formatWac(item.weightedAverageUnitCostMicros)} / {item.unit}</p>
           <p>{item.hpp === null ? item.weightedAverageUnitCostMicros === null ? "WAC belum diketahui — HPP tidak tersedia" : "HPP melebihi batas biaya" : rupiah(item.hpp)}</p>
         </li>)}</ul>
-      </section>
+      </section>}
     </div>}
+    </Content>
+    {showDeleteDialog && <dialog ref={deleteDialog} aria-labelledby="delete-menu-title"
+      className="fixed inset-0 m-auto max-h-[90dvh] w-[calc(100%-2rem)] max-w-lg space-y-4 overflow-y-auto rounded-2xl bg-[#fffefa] p-6 text-[#263020] shadow-xl backdrop:bg-black/50"
+      onCancel={event => { event.preventDefault(); cancelDelete(); }}>
+      <h2 id="delete-menu-title" className="text-2xl font-semibold">Hapus Menu</h2>
+      <p>Hapus menu <strong>{deleteTarget.name}</strong>?</p>
+      <p>Menu yang belum pernah digunakan dalam pesanan akan dihapus beserta resepnya. Menu dengan riwayat transaksi hanya dinonaktifkan; resep dan riwayat transaksi tetap tersimpan.</p>
+      {message && <p role="status">{message}</p>}
+      {deletePending && <p>Penghapusan perlu diperiksa. Jangan mengirim permintaan baru sampai hasilnya dipastikan.</p>}
+      <div className="flex flex-wrap gap-3">
+        <button type="button" className={control} disabled={saving || !!deletePending} onClick={cancelDelete}>Batal hapus menu</button>
+        {deletePending
+          ? <button type="button" className={primary} disabled={saving || blocked || !ready}
+            onClick={() => deleteIntent.current && void sendDelete(deleteIntent.current, true)}>Periksa penghapusan / coba lagi</button>
+          : <button type="button" className={`${control} bg-red-800 font-semibold text-white`} disabled={saving || blocked || !ready}
+            onClick={() => {
+              if (!deleteIntent.current && !busy.current) void sendDelete({ productId: deleteTarget.productId, idempotencyKey: crypto.randomUUID() }, false);
+            }}>Konfirmasi hapus menu</button>}
+      </div>
+    </dialog>}
   </div>;
 }
