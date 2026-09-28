@@ -22,9 +22,10 @@ test("every action rejects restricted roles and revoked sessions before service/
     const { closeShiftAction } = await import("../shifts/close-action");
     const settlement = await import("../shifts/settlement-action");
     const { submitPaymentAction } = await import("../../app/pos/payment-action");
-    const { getDailyReportAction } = await import("../reports/action");
+    const { getDailyReportAction, getReportReceiptAction } = await import("../reports/action");
     const adminCalls = [() => users.listUsersAction(), () => users.createUserAction({ role: "ADMIN" }),
-      () => users.changeUserRoleAction({}), () => users.setUserActiveAction({}), () => getDailyReportAction("2026-09-18")];
+      () => users.changeUserRoleAction({}), () => users.setUserActiveAction({})];
+    const reportCalls = [() => getDailyReportAction("2026-09-18"), () => getReportReceiptAction(randomUUID())];
     const operationalCalls = [() => orders.createOrderAction({}), () => orders.editOrderAction({}),
       () => orders.cancelOrderAction({}), () => orders.listActiveUnpaidOrdersAction(),
       () => orders.getActiveUnpaidOrderAction(randomUUID()), () => orders.getReceiptAction(randomUUID()),
@@ -39,7 +40,8 @@ test("every action rejects restricted roles and revoked sessions before service/
     for (const role of ["CASHIER", "STOCK_MANAGEMENT", "FINANCE", null] as const) {
       user = role ? { id: randomUUID(), name: "Staff", loginIdentifier: "staff", role } : null;
       for (const call of [...adminCalls, ...(role !== "CASHIER" ? operationalCalls : []), ...(role !== "STOCK_MANAGEMENT" ? [...inventoryCalls, () => recipes.saveRecipeAction({})] : []),
-        ...(role === "CASHIER" || role === null ? recipeReads : [])]) {
+        ...(role === "CASHIER" || role === null ? recipeReads : []),
+        ...(role === "STOCK_MANAGEMENT" || role === null ? reportCalls : [])]) {
         await assert.rejects(call(), (error: unknown) => {
           assert.equal((error as { digest: string }).digest, `NEXT_REDIRECT;replace;${role ? "/" : "/login"};307;`);
           return true;

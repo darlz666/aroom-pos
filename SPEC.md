@@ -936,3 +936,11 @@ and integer-only ingredient unit-cost design in sections 20-22 for 7E. Existing
   payment error messages for missing recipes, inactive ingredients, insufficient
   stock, inventory conflicts and invalid inventory state. No stock-deduction
   action is exposed to clients.
+
+## 25. Daily Report Transaction Actions
+
+- Active ADMIN, CASHIER, and FINANCE may read the existing Daily Report, including its daily summary, shift reconciliation and successful-payment transaction rows, and reprint paid receipts from that report across shifts. This supersedes section 5's ADMIN-only reporting and FINANCE receipt restriction only for these read-only report operations; other operational permissions remain unchanged.
+- Report page and read/reprint actions use fresh server authentication. No client-supplied actor or role is authoritative. Existing POS/order-history receipt visibility remains unchanged.
+- The final Aksi column provides detail and receipt reprint controls. Detail displays saved report values in Asia/Jakarta, retaining neutral unsupported fields and unknown historical costs.
+- ADMIN also sees disabled Edit/Delete controls with an unsupported explanation. There is no safe paid-order adjustment/archive model: paid orders, item/payment snapshots, audits and settlement history remain immutable. Non-admin users never see Edit/Delete.
+- Receipt reprints reuse the saved receipt projection, COPY formatter and PrinterAdapter. Read/print failures remain retryable and never change financial state; duplicate submissions are guarded.

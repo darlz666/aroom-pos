@@ -95,6 +95,12 @@ test("daily reporting service", async t => {
   const { getDailyReport } = await import("./service");
   const read = (f: ReturnType<typeof fixture>) => getDailyReport(f.db, admin, "2026-09-17");
 
+  for (const role of ["CASHIER", "FINANCE"] as const) {
+    const f = fixture();
+    await getDailyReport(f.db, { id: "reader", role }, "2026-09-17");
+    f.unchanged();
+  }
+
   await t.test("normal report includes Cash, EDC and QRIS once and remains read-only on retry", async () => {
     const f = fixture([payment(), payment("BCA_EDC", 33000), payment("MIDTRANS_QRIS", 44000)]);
     const report = await read(f);
@@ -188,9 +194,9 @@ test("daily reporting service", async t => {
     first.order.items[0].quantity = Number.MAX_SAFE_INTEGER;
     await assert.rejects(read(fixture([first])), { code: "UNAVAILABLE" });
   });
-  await t.test("non-admin and malformed date reject before any report database access", async () => {
+  await t.test("unauthorized actor and malformed date reject before any report database access", async () => {
     const f = fixture();
-    await assert.rejects(getDailyReport(f.db, { id: "cashier", role: "CASHIER" }, "2026-09-17"), { code: "FORBIDDEN" });
+    await assert.rejects(getDailyReport(f.db, { id: "stock", role: "STOCK_MANAGEMENT" }, "2026-09-17"), { code: "FORBIDDEN" });
     await assert.rejects(getDailyReport(f.db, { id: "", role: "ADMIN" }, "2026-09-17"), { code: "FORBIDDEN" });
     await assert.rejects(getDailyReport(f.db, admin, "2026-02-30"), { code: "INVALID_DATE" });
     await assert.rejects(getDailyReport(f.db, admin, { date: "2026-09-17", paidSales: 1 }), { code: "INVALID_DATE" });

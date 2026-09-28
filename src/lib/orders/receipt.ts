@@ -5,8 +5,19 @@ import { OrderError } from "./domain";
 
 /** Read projection only. Actor must come from fresh server authentication. */
 export async function getReceipt(db: PrismaClient, actor: ShiftActor, orderId: string) {
+  return readReceipt(db, actor, orderId, false);
+}
+
+/** Report-only visibility; callers must supply the freshly authenticated actor. */
+export async function getReportReceipt(db: PrismaClient, actor: ShiftActor, orderId: string) {
+  return readReceipt(db, actor, orderId, true);
+}
+
+async function readReceipt(db: PrismaClient, actor: ShiftActor, orderId: string, report: boolean) {
   try {
-    assertCanOpenShift(actor, null);
+    if (report) {
+      if (!actor.id || !["ADMIN", "CASHIER", "FINANCE"].includes(actor.role)) throw new OrderError("FORBIDDEN");
+    } else assertCanOpenShift(actor, null);
     if (typeof orderId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orderId)) {
       throw new OrderError("INVALID_INPUT");
     }
@@ -25,7 +36,7 @@ export async function getReceipt(db: PrismaClient, actor: ShiftActor, orderId: s
       },
     });
     if (!order) throw new OrderError("ORDER_NOT_FOUND");
-    assertCanViewShift(actor, order.shift);
+    if (!report) assertCanViewShift(actor, order.shift);
     const payment = order.payments[0];
     if (order.status !== "PAID" || !payment) throw new OrderError("ORDER_NOT_FOUND");
     return {

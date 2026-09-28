@@ -16,7 +16,7 @@ test("receipt read projection", async (t) => {
     if (original) require.cache[serverOnlyPath] = original;
     else delete require.cache[serverOnlyPath];
   });
-  const { getReceipt } = await import("./receipt");
+  const { getReceipt, getReportReceipt } = await import("./receipt");
   const actor = { id: randomUUID(), role: "CASHIER" as const };
   const orderId = randomUUID();
   const shift = { id: randomUUID(), cashierId: actor.id, status: "OPEN" };
@@ -43,6 +43,27 @@ test("receipt read projection", async (t) => {
       },
     } } as unknown as PrismaClient;
   }
+  await t.test("report readers can reprint across shifts without widening operational receipt access", async () => {
+    for (const role of ["ADMIN", "CASHIER", "FINANCE"] as const) {
+      const order = structuredClone(stored);
+      const before = structuredClone(order);
+      const reader = { id: randomUUID(), role };
+      const result = await getReportReceipt(fixture(order), reader, orderId);
+      assert.equal(result.total, 44000);
+      assert.equal(result.items[0].name, "Original coffee");
+      const printed = await createReceiptPrintJob(result, undefined, true).print();
+      assert.equal(printed.status, "failed");
+      assert.deepEqual(order, before);
+      if (role !== "ADMIN") await assert.rejects(getReceipt(fixture(order), reader, orderId), { code: "FORBIDDEN" });
+      for (const status of ["UNPAID", "CANCELLED"]) {
+        await assert.rejects(getReportReceipt(fixture({ ...order, status }), reader, orderId), { code: "ORDER_NOT_FOUND" });
+      }
+      await assert.rejects(getReportReceipt(fixture({ ...order, payments: [] }), reader, orderId), { code: "ORDER_NOT_FOUND" });
+    }
+    await assert.rejects(getReportReceipt({} as PrismaClient, { id: "stock", role: "STOCK_MANAGEMENT" }, orderId), { code: "FORBIDDEN" });
+    await assert.rejects(getReportReceipt({} as PrismaClient, { id: "", role: "ADMIN" }, orderId), { code: "FORBIDDEN" });
+    await assert.rejects(getReportReceipt({} as PrismaClient, actor, "bad-id"), { code: "INVALID_INPUT" });
+  });
   await t.test("paid order returns only the receipt DTO; retries return the same read", async () => {
     const db = fixture();
     const receipt = await getReceipt(db, actor, orderId);

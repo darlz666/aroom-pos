@@ -4,6 +4,8 @@ import { useRef, useState } from "react";
 import { getDailyReportAction } from "@/lib/reports/action";
 import type { DailyReport } from "@/lib/reports/service";
 
+import { TransactionActions } from "./transaction-actions";
+
 type Result = Awaited<ReturnType<typeof getDailyReportAction>>;
 const control = "min-h-12 rounded-lg border border-[#a8aea0] px-4 py-2 font-semibold hover:bg-[#e9eade] focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-40";
 const rupiah = (value: number) => `Rp${new Intl.NumberFormat("id-ID").format(value)}`;
@@ -15,7 +17,7 @@ const dateTime = (value: string, part?: "date" | "time") => new Intl.DateTimeFor
 }).format(new Date(value));
 const paymentLabels = { CASH: "Tunai", BCA_EDC: "BCA EDC", MIDTRANS_QRIS: "QRIS" };
 
-export function DailyReportSummary({ report }: { report: DailyReport }) {
+export function DailyReportSummary({ report, role = "" }: { report: DailyReport; role?: string }) {
   return <div className="space-y-8">
     <section aria-label="Penjualan harian" className="space-y-4">
       <h2 className="text-xl font-semibold">Penjualan tanggal {report.businessDate} · WIB</h2>
@@ -49,12 +51,13 @@ export function DailyReportSummary({ report }: { report: DailyReport }) {
     <section aria-label="Detail transaksi" className="space-y-4">
       <h2 className="text-xl font-semibold">Detail transaksi</h2>
       <p>Daftar transaksi lunas berdasarkan waktu pembayaran berhasil.</p>
+      {role === "ADMIN" && <p>Edit dan hapus belum didukung: transaksi lunas tidak dapat diubah atau dihapus.</p>}
       <p className="text-sm">Pelanggan / meja belum tersedia. Diskon voucher, promo POS, piutang, dan iklan ditampilkan Rp0 karena belum dicatat. HPP, Gross Profit, dan Pendapatan Bersih belum tersedia karena biaya historis saat penjualan belum tersimpan.</p>
       {report.transactions.length === 0 ? <p>Belum ada transaksi lunas pada tanggal ini.</p> :
         <div className="overflow-x-auto rounded-xl border border-[#dedfd5] bg-[#fffefa]" tabIndex={0} role="region" aria-label="Tabel detail transaksi">
           <table className="w-full min-w-[2200px] text-left text-sm">
             <thead className="bg-[#e9eade]">
-              <tr>{["No. Pesanan", "Tanggal", "Jam", "Pelanggan / Meja", "Produk", "Qty", "Status Pembayaran", "Harga Jual", "Total Omzet", "Diskon Voucher", "Promo POS", "Piutang", "HPP", "Iklan", "Total Potongan", "Gross Profit", "Pendapatan Bersih"].map(label =>
+              <tr>{["No. Pesanan", "Tanggal", "Jam", "Pelanggan / Meja", "Produk", "Qty", "Status Pembayaran", "Harga Jual", "Total Omzet", "Diskon Voucher", "Promo POS", "Piutang", "HPP", "Iklan", "Total Potongan", "Gross Profit", "Pendapatan Bersih", "Aksi"].map(label =>
                 <th key={label} scope="col" className="whitespace-nowrap px-4 py-4 font-semibold">{label}</th>)}</tr>
             </thead>
             <tbody>{report.transactions.map(transaction => <tr key={transaction.orderId} className="border-t border-[#dedfd5] align-top">
@@ -67,6 +70,7 @@ export function DailyReportSummary({ report }: { report: DailyReport }) {
               <td className="whitespace-nowrap px-4 py-4">Lunas · {paymentLabels[transaction.paymentMethod]}</td>
               {(["sellingPrice", "totalRevenue", "voucherDiscount", "posPromo", "receivable", "hpp", "adsCost", "totalDiscount", "grossProfit", "netRevenue"] as const).map(field =>
                 <td key={field} className="whitespace-nowrap px-4 py-4 text-right tabular-nums">{transaction[field] === null ? "-" : rupiah(transaction[field])}</td>)}
+              <td className="px-4 py-4"><TransactionActions transaction={transaction} role={role} /></td>
             </tr>)}</tbody>
           </table>
         </div>}
@@ -74,7 +78,7 @@ export function DailyReportSummary({ report }: { report: DailyReport }) {
   </div>;
 }
 
-export function DailyReportPanel({ initialDate, initial }: { initialDate: string; initial: Result }) {
+export function DailyReportPanel({ initialDate, initial, role }: { initialDate: string; initial: Result; role: string }) {
   const [date, setDate] = useState(initialDate);
   const [report, setReport] = useState<DailyReport | null>(initial.success ? initial.report : null);
   const [error, setError] = useState<string | null>(initial.success ? null : initial.error);
@@ -117,6 +121,6 @@ export function DailyReportPanel({ initialDate, initial }: { initialDate: string
     </form>
     {loading && <p role="status">Memuat laporan…</p>}
     {error && <p role="alert">{error}</p>}
-    {report && <DailyReportSummary report={report} />}
+    {report && <DailyReportSummary report={report} role={role} />}
   </div>;
 }

@@ -1,7 +1,7 @@
 # Milestone 6E — Daily reporting
 
-Admin area links to `/admin/reports`. Both page and action require a freshly
-authenticated ADMIN; the internal service independently checks the supplied
+The home and Admin areas link to `/admin/reports`. Page and read actions require a freshly
+authenticated ADMIN, CASHIER or FINANCE (SPEC section 25); the internal service independently checks the supplied
 server actor before any report query. Authentication itself may read User.
 The only action input is a strict `YYYY-MM-DD` date, never financial values.
 
@@ -23,7 +23,7 @@ Closed shifts return persisted opening/expected/counted cash and variance; no
 historical closing value is recomputed. Missing closed values fail explicitly.
 
 All queries share one RepeatableRead transaction. Reporting has no writes,
-provider calls, printing, schema changes, report tables, or background work.
+provider calls, schema changes, report tables, or background work.
 Failures return controlled errors rather than successful zero totals. The UI
 clears old financial data during date changes/loads/errors, ignores superseded
 responses, guards duplicate taps, and provides explicit refresh/retry.
@@ -59,3 +59,17 @@ advertising cost, calculated on the server with safe integer arithmetic.
 The table follows shift reconciliation, scrolls horizontally, and reuses the
 report's Rupiah and Jakarta date/time formatters. Unknown values render as `-`,
 distinct from known/placeholder Rp0; the UI explains these limitations.
+
+## Transaction actions
+
+The final Aksi column opens a native modal with the selected saved report row or
+a receipt reprint prompt. All report readers may view details and reprint across
+shifts. The report-specific receipt action reauthenticates, validates the ID and
+reuses the existing PAID/SUCCEEDED receipt projection; operational receipt access
+retains its existing shift-owner rules. Reprints use the COPY formatter and
+PrinterAdapter, including the controlled unconfigured-printer error. Duplicate
+read/print submissions are guarded; errors never write financial data.
+
+Only ADMIN sees Edit/Delete, disabled with an explanation. Paid order mutation,
+adjustment and archive are unsupported by the existing domain. No mutation
+endpoint or financial-history rewrite is introduced.

@@ -34,7 +34,7 @@ function add(total: number, amount: number): number {
 
 /** Internal read-only API; actor must come from fresh server authentication. */
 export async function getDailyReport(db: PrismaClient, actor: ShiftActor, input: unknown) {
-  if (!actor.id || actor.role !== "ADMIN") throw new ReportError("FORBIDDEN");
+  if (!actor.id || !["ADMIN", "CASHIER", "FINANCE"].includes(actor.role)) throw new ReportError("FORBIDDEN");
   const { businessDate, start, end } = businessDateRange(input);
   try {
     return await db.$transaction(async tx => {

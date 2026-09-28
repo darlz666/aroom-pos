@@ -20,6 +20,7 @@ export default async function Home() {
     return <main lang="id" className="flex flex-1 flex-col items-center justify-center gap-6 bg-[#f6f4ef] p-8 text-center text-[#292e28]">
       <h1 className="text-3xl font-semibold">Finance</h1>
       <p className="text-lg">{user.name}</p>
+      <Link href="/admin/reports" className="inline-flex min-h-14 items-center rounded-lg border border-[#a8aea0] px-6 py-3 font-semibold">Laporan harian</Link>
       <Link href="/recipes" className="inline-flex min-h-14 items-center rounded-lg border border-[#a8aea0] px-6 py-3 font-semibold">Lihat resep &amp; HPP</Link>
       <form action={logout}><button type="submit" className="min-h-14 rounded-lg border border-[#a8aea0] px-6 py-3 font-semibold">Logout</button></form>
     </main>;
@@ -35,6 +36,7 @@ export default async function Home() {
         </div>
         <div className="flex flex-wrap items-center gap-6">
           {user.role === "ADMIN" && <Link href="/admin" className="inline-flex min-h-14 items-center rounded-lg border border-[#a8aea0] px-6 py-3 font-semibold">Admin</Link>}
+          <Link href="/admin/reports" className="inline-flex min-h-14 items-center rounded-lg border border-[#a8aea0] px-6 py-3 font-semibold">Laporan harian</Link>
           <Link href="/orders" className="inline-flex min-h-14 items-center rounded-lg border border-[#a8aea0] px-6 py-3 font-semibold hover:bg-[#e9eade] focus-visible:outline-2 focus-visible:outline-offset-4">Riwayat pesanan</Link>
           <div><p className="text-lg font-semibold break-words">{user.name}</p><p className="text-sm text-[#62685c]">{user.role}</p></div>
           <form action={logout}>

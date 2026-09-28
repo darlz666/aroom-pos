@@ -24,6 +24,13 @@ export async function requireOperator(): Promise<AuthenticatedUser> {
   return user;
 }
 
+// Read-only daily reporting; does not grant POS or order mutation access.
+export async function requireReportReader(): Promise<AuthenticatedUser> {
+  const user = await requireUser();
+  if (!["ADMIN", "CASHIER", "FINANCE"].includes(user.role)) redirect("/");
+  return user;
+}
+
 // Milestone 7C grants only supplier/receiving backend access to Stock Management.
 export async function requireInventoryManager(): Promise<AuthenticatedUser> {
   const user = await requireUser();
