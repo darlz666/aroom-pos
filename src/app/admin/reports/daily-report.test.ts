@@ -33,7 +33,7 @@ function text(node: unknown): string {
   return typeof node === "string" || typeof node === "number" ? String(node) : "";
 }
 const report = { businessDate: "2026-09-17", paidSales: 99000, paidOrderCount: 3,
-  cashTotal: 22000, edcTotal: 33000, qrisTotal: 44000, shifts: [{
+  cashTotal: 22000, edcTotal: 33000, qrisTotal: 44000, transactions: [], shifts: [{
     id: "shift", status: "CLOSED", cashierName: "Cashier", openedAt: "2026-09-16T16:00:00.000Z",
     closedAt: "2026-09-17T18:00:00.000Z", openingCash: 100000, expectedCash: 180000,
     countedCash: 179000, variance: -1000,
@@ -120,6 +120,33 @@ test("report summary displays server totals, persisted reconciliation, Jakarta t
   const empty = text(summary({ report: { ...report, paidSales: 0, paidOrderCount: 0, shifts: [] } }));
   assert.match(empty, /Belum ada pembayaran berhasil/);
   assert.match(empty, /Tidak ada shift/);
+  assert.match(empty, /Belum ada transaksi lunas pada tanggal ini\./);
+});
+
+test("transaction table follows reconciliation, formats saved values and distinguishes unknown costs from zero", () => {
+  const { DailyReportSummary: summary } = load("./daily-report.tsx", { react: {}, "@/lib/reports/action": {} });
+  const transaction = { orderId: "order", orderNumber: "AROOM-001", paidAt: "2026-09-16T17:05:00.000Z",
+    customerLabel: null, productsLabel: "Americano x2, Aroomsbrew x1", quantity: 3, paymentMethod: "CASH",
+    sellingPrice: 66000, totalRevenue: 66000, voucherDiscount: 0, posPromo: 0, receivable: 0,
+    hpp: null, adsCost: 0, totalDiscount: 0, grossProfit: null, netRevenue: null };
+  for (const [method, label] of [["CASH", "Tunai"], ["BCA_EDC", "BCA EDC"], ["MIDTRANS_QRIS", "QRIS"]]) {
+    const tree = summary({ report: { ...report, transactions: [{ ...transaction, paymentMethod: method }] } });
+    assert.deepEqual(elements(tree).filter(e => e.type === "section").map(e => e.props["aria-label"]),
+      ["Penjualan harian", "Rekonsiliasi shift", "Detail transaksi"]);
+    assert.ok(elements(tree).some(e => String(e.props.className).includes("overflow-x-auto")));
+    const table = elements(tree).find(e => e.type === "table")!;
+    const rows = elements(table).filter(e => e.type === "tr");
+    assert.equal(rows.length, 2);
+    assert.deepEqual(elements(rows[0]).filter(e => e.type === "th").map(text),
+      ["No. Pesanan", "Tanggal", "Jam", "Pelanggan / Meja", "Produk", "Qty", "Status Pembayaran", "Harga Jual", "Total Omzet", "Diskon Voucher", "Promo POS", "Piutang", "HPP", "Iklan", "Total Potongan", "Gross Profit", "Pendapatan Bersih"]);
+    const cells = elements(rows[1]).filter(e => e.type === "td" || e.type === "th").map(e => text(e).replace(/\s+/g, " "));
+    assert.equal(cells.length, 17);
+    assert.equal(cells[0], "AROOM-001");
+    assert.equal(cells[1], "17/09/2026");
+    assert.equal(cells[2], "00:05 WIB");
+    assert.deepEqual(cells.slice(3), ["-", "Americano x2, Aroomsbrew x1", "3", `Lunas · ${label}`,
+      "Rp66.000", "Rp66.000", "Rp0", "Rp0", "Rp0", "-", "Rp0", "Rp0", "-", "-"]);
+  }
 });
 
 function harness(value: unknown = initial) {

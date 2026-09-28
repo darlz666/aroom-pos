@@ -33,3 +33,29 @@ full-shift reconciliation, authorization, failures and unchanged fixtures.
 Component/action tests exercise actual modules with isolated Next/hook boundaries;
 they are not browser or tablet validation. Existing settlement, close, payment,
 order and lifecycle tests remain regression coverage.
+
+## Transaction details
+
+The existing DTO also returns one transaction per successful payment/paid order,
+using exactly the summary's success-time filter and RepeatableRead snapshot.
+Rows sort by succeededAt descending, then payment ID descending; item snapshots
+sort by item ID. Product labels use saved names and quantities, never live menu
+names. Selling price and revenue both use Payment.amount (the saved full order
+total); there is no pre-discount selling-price concept yet. Cash tendered is not
+revenue. Only explicitly selected display data leaves the service.
+
+Customer/table is a null placeholder. Voucher discount, POS promo, receivable,
+and advertising cost are zero placeholders; total discount is voucher + promo.
+These values are never persisted. Historical HPP is unavailable (null): orders
+and payments do not snapshot cost, SALE_CONSUMPTION stores quantity and balance
+but no WAC/cost at sale, and current recipes/WAC are mutable. Receiving history
+does not guarantee complete historical opening valuations or an unambiguous
+costing sequence for every sale, including pre-consumption orders. Do not use
+today's recipe HPP or latest purchase cost to fill this gap. Gross profit and
+net revenue remain null as well. If historical HPP becomes available in future,
+the intended formulas are revenue - HPP - total discount, then gross profit -
+advertising cost, calculated on the server with safe integer arithmetic.
+
+The table follows shift reconciliation, scrolls horizontally, and reuses the
+report's Rupiah and Jakarta date/time formatters. Unknown values render as `-`,
+distinct from known/placeholder Rp0; the UI explains these limitations.

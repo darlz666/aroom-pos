@@ -7,9 +7,13 @@ import type { DailyReport } from "@/lib/reports/service";
 type Result = Awaited<ReturnType<typeof getDailyReportAction>>;
 const control = "min-h-12 rounded-lg border border-[#a8aea0] px-4 py-2 font-semibold hover:bg-[#e9eade] focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-40";
 const rupiah = (value: number) => `Rp${new Intl.NumberFormat("id-ID").format(value)}`;
-const dateTime = (value: string) => new Intl.DateTimeFormat("id-ID", {
-  timeZone: "Asia/Jakarta", dateStyle: "medium", timeStyle: "short",
+const dateTime = (value: string, part?: "date" | "time") => new Intl.DateTimeFormat(part ? "en-GB" : "id-ID", {
+  timeZone: "Asia/Jakarta",
+  ...(part === "date" ? { day: "2-digit", month: "2-digit", year: "numeric" } as const :
+    part === "time" ? { hour: "2-digit", minute: "2-digit", hourCycle: "h23" } as const :
+      { dateStyle: "medium", timeStyle: "short" } as const),
 }).format(new Date(value));
+const paymentLabels = { CASH: "Tunai", BCA_EDC: "BCA EDC", MIDTRANS_QRIS: "QRIS" };
 
 export function DailyReportSummary({ report }: { report: DailyReport }) {
   return <div className="space-y-8">
@@ -41,6 +45,31 @@ export function DailyReportSummary({ report }: { report: DailyReport }) {
           ] as const).map(([label, value]) => <div key={label}><dt>{label}</dt><dd className="mt-1 text-xl font-semibold tabular-nums">{value === null ? "Belum ditetapkan" : rupiah(value)}</dd></div>)}
         </dl>
       </article>)}
+    </section>
+    <section aria-label="Detail transaksi" className="space-y-4">
+      <h2 className="text-xl font-semibold">Detail transaksi</h2>
+      <p>Daftar transaksi lunas berdasarkan waktu pembayaran berhasil.</p>
+      <p className="text-sm">Pelanggan / meja belum tersedia. Diskon voucher, promo POS, piutang, dan iklan ditampilkan Rp0 karena belum dicatat. HPP, Gross Profit, dan Pendapatan Bersih belum tersedia karena biaya historis saat penjualan belum tersimpan.</p>
+      {report.transactions.length === 0 ? <p>Belum ada transaksi lunas pada tanggal ini.</p> :
+        <div className="overflow-x-auto rounded-xl border border-[#dedfd5] bg-[#fffefa]" tabIndex={0} role="region" aria-label="Tabel detail transaksi">
+          <table className="w-full min-w-[2200px] text-left text-sm">
+            <thead className="bg-[#e9eade]">
+              <tr>{["No. Pesanan", "Tanggal", "Jam", "Pelanggan / Meja", "Produk", "Qty", "Status Pembayaran", "Harga Jual", "Total Omzet", "Diskon Voucher", "Promo POS", "Piutang", "HPP", "Iklan", "Total Potongan", "Gross Profit", "Pendapatan Bersih"].map(label =>
+                <th key={label} scope="col" className="whitespace-nowrap px-4 py-4 font-semibold">{label}</th>)}</tr>
+            </thead>
+            <tbody>{report.transactions.map(transaction => <tr key={transaction.orderId} className="border-t border-[#dedfd5] align-top">
+              <th scope="row" className="whitespace-nowrap px-4 py-4 font-semibold">{transaction.orderNumber}</th>
+              <td className="whitespace-nowrap px-4 py-4">{dateTime(transaction.paidAt, "date")}</td>
+              <td className="whitespace-nowrap px-4 py-4">{dateTime(transaction.paidAt, "time")} WIB</td>
+              <td className="px-4 py-4">{transaction.customerLabel ?? "-"}</td>
+              <td className="min-w-72 max-w-96 break-words px-4 py-4">{transaction.productsLabel}</td>
+              <td className="px-4 py-4 tabular-nums">{transaction.quantity}</td>
+              <td className="whitespace-nowrap px-4 py-4">Lunas · {paymentLabels[transaction.paymentMethod]}</td>
+              {(["sellingPrice", "totalRevenue", "voucherDiscount", "posPromo", "receivable", "hpp", "adsCost", "totalDiscount", "grossProfit", "netRevenue"] as const).map(field =>
+                <td key={field} className="whitespace-nowrap px-4 py-4 text-right tabular-nums">{transaction[field] === null ? "-" : rupiah(transaction[field])}</td>)}
+            </tr>)}</tbody>
+          </table>
+        </div>}
     </section>
   </div>;
 }

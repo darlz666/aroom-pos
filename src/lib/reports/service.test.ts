@@ -10,7 +10,8 @@ const end = new Date("2026-09-17T17:00:00.000Z");
 const payment = (method: PaymentMethod = "CASH", amount = 22000, time = start) => ({
   id: crypto.randomUUID(), orderId: crypto.randomUUID(), method, amount, succeededAt: time as Date | null,
   status: "SUCCEEDED" as PaymentStatus, cashReceived: 100000,
-  order: { shiftId: "shift", status: "PAID" as OrderStatus, createdAt: new Date("2026-09-01T00:00:00Z") },
+  order: { shiftId: "shift", orderNumber: "AROOM-00001", status: "PAID" as OrderStatus, createdAt: new Date("2026-09-01T00:00:00Z"),
+    items: [{ productNameSnapshot: "Americano", quantity: 2 }, { productNameSnapshot: "Aroomsbrew", quantity: 1 }] },
 });
 const shift = (status: ShiftStatus = "CLOSED") => ({
   id: "shift", status, openedAt: new Date("2026-09-16T16:00:00Z"),
@@ -26,6 +27,17 @@ function fixture(payments = [payment()], shifts = [shift()]) {
   // Deliberately no write methods. A mutation or undeclared read fails the test.
   const tx = {
     payment: {
+      findMany: async (query: { where: { succeededAt: { gte: Date; lt: Date } }; orderBy: unknown; select: unknown }) => {
+        reads++;
+        const { gte, lt } = query.where.succeededAt;
+        assert.deepEqual(query.where, { status: "SUCCEEDED", succeededAt: { gte, lt }, order: { status: "PAID" } });
+        assert.deepEqual(query.orderBy, [{ succeededAt: "desc" }, { id: "desc" }]);
+        assert.deepEqual(query.select, { orderId: true, method: true, amount: true, succeededAt: true,
+          order: { select: { orderNumber: true, items: { orderBy: { id: "asc" }, select: { productNameSnapshot: true, quantity: true } } } } });
+        return payments.filter(p => p.status === "SUCCEEDED" && p.order.status === "PAID" &&
+          p.succeededAt && p.succeededAt >= gte && p.succeededAt < lt)
+          .sort((a, b) => b.succeededAt!.getTime() - a.succeededAt!.getTime() || b.id.localeCompare(a.id));
+      },
       groupBy: async (query: { where: { succeededAt: { gte: Date; lt: Date } } }) => {
         reads++;
         const { gte, lt } = query.where.succeededAt;
@@ -86,8 +98,10 @@ test("daily reporting service", async t => {
   await t.test("normal report includes Cash, EDC and QRIS once and remains read-only on retry", async () => {
     const f = fixture([payment(), payment("BCA_EDC", 33000), payment("MIDTRANS_QRIS", 44000)]);
     const report = await read(f);
-    assert.deepEqual({ ...report, shifts: [] }, { businessDate: "2026-09-17", paidSales: 99000,
-      paidOrderCount: 3, cashTotal: 22000, edcTotal: 33000, qrisTotal: 44000, shifts: [] });
+    assert.deepEqual({ ...report, shifts: [], transactions: [] }, { businessDate: "2026-09-17", paidSales: 99000,
+      paidOrderCount: 3, cashTotal: 22000, edcTotal: 33000, qrisTotal: 44000, shifts: [], transactions: [] });
+    assert.equal(report.transactions.length, 3);
+    assert.deepEqual(report.transactions.map(row => row.paymentMethod).sort(), ["BCA_EDC", "CASH", "MIDTRANS_QRIS"]);
     assert.deepEqual(await read(f), report);
     f.unchanged();
   });
@@ -98,6 +112,8 @@ test("daily reporting service", async t => {
     const result = await read(fixture(rows));
     assert.equal(result.paidSales, 6);
     assert.equal(result.paidOrderCount, 2);
+    assert.deepEqual(result.transactions.map(row => [row.orderId, row.paidAt]),
+      [rows[2], rows[1]].map(row => [row.orderId, row.succeededAt!.toISOString()]));
   });
   await t.test("multiple failed/pending/expired/cancelled attempts on the same paid order never inflate sales", async () => {
     const success = payment();
@@ -107,6 +123,8 @@ test("daily reporting service", async t => {
     assert.equal(result.paidSales, 22000);
     assert.equal(result.paidOrderCount, 1);
     assert.equal(result.edcTotal, 0);
+    assert.equal(result.transactions.length, 1);
+    assert.equal(result.transactions[0].orderId, success.orderId);
   });
   await t.test("unpaid/cancelled orders and absent success time contribute nothing", async () => {
     const rows = [payment(), payment(), payment()];
@@ -116,6 +134,7 @@ test("daily reporting service", async t => {
     const result = await read(fixture(rows));
     assert.equal(result.paidSales, 0);
     assert.equal(result.paidOrderCount, 0);
+    assert.deepEqual(result.transactions, []);
   });
   await t.test("midnight-spanning closed shift preserves all persisted cash values without aggregation", async () => {
     const saved = shift();
@@ -148,7 +167,26 @@ test("daily reporting service", async t => {
   });
   await t.test("empty date produces explicit zero totals only after successful reads", async () => {
     assert.deepEqual(await read(fixture([], [])), { businessDate: "2026-09-17", paidSales: 0,
-      paidOrderCount: 0, cashTotal: 0, edcTotal: 0, qrisTotal: 0, shifts: [] });
+      paidOrderCount: 0, cashTotal: 0, edcTotal: 0, qrisTotal: 0, shifts: [], transactions: [] });
+  });
+  await t.test("transaction DTO uses saved sales evidence, neutral placeholders and unavailable historical costs", async () => {
+    const saved = payment("BCA_EDC", 66000);
+    const f = fixture([saved]); // No Product, Recipe, Ingredient or costing reads are available.
+    const report = await read(f);
+    assert.deepEqual(report.transactions, [{ orderId: saved.orderId, orderNumber: saved.order.orderNumber,
+      paidAt: start.toISOString(), customerLabel: null, productsLabel: "Americano x2, Aroomsbrew x1",
+      quantity: 3, paymentMethod: "BCA_EDC", sellingPrice: 66000, totalRevenue: 66000,
+      voucherDiscount: 0, posPromo: 0, receivable: 0, adsCost: 0, totalDiscount: 0,
+      hpp: null, grossProfit: null, netRevenue: null }]);
+    assert.deepEqual(await read(f), report);
+    f.unchanged();
+  });
+  await t.test("equal success times have deterministic ordering and quantity overflow fails safely", async () => {
+    const first = { ...payment(), id: "a" };
+    const second = { ...payment(), id: "b" };
+    assert.deepEqual((await read(fixture([first, second]))).transactions.map(row => row.orderId), [second.orderId, first.orderId]);
+    first.order.items[0].quantity = Number.MAX_SAFE_INTEGER;
+    await assert.rejects(read(fixture([first])), { code: "UNAVAILABLE" });
   });
   await t.test("non-admin and malformed date reject before any report database access", async () => {
     const f = fixture();
