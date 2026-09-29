@@ -17,6 +17,7 @@ function load(file: string, mocks: Record<string, unknown>, globals: Record<stri
     if (id in mocks) return mocks[id];
     if (id === "./transaction-editor") return { TransactionEditor: "Editor" };
     if (id === "./transaction-actions") return { TransactionActions: "Actions" };
+    if (id === "../../finance-navigation") return { FinanceNavigation: "FinanceNavigation" };
     if (id === "../orders/receipt") return {};
     if (id === "react/jsx-runtime") return require(id);
     throw new Error(`Unexpected dependency: ${id}`);

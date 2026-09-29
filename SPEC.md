@@ -939,6 +939,13 @@ and integer-only ingredient unit-cost design in sections 20-22 for 7E. Existing
 
 ## 25. Daily Report Transaction Actions
 
+### Finance landing
+
+- FINANCE lands on the existing role-aware `/` home after login, with AROOM Coffee Bar / Finance, today's Asia/Jakarta date, Total Penjualan and transaction count, Tunai, BCA EDC, QRIS, and Lihat Laporan Harian. This supersedes the earlier Finance placeholder requirement.
+- Reuse the authoritative Daily Report read model, including adjusted values and void exclusions. Show loading, empty and retryable error states; failed reads must never appear as zero sales.
+- Finance navigation contains only Dashboard, Laporan Harian and Keluar. Existing recipe read permission is unchanged, but recipe management and its navigation are not part of this experience. Other roles' landing behavior remains unchanged.
+- Finance and Cashier can view transaction details and reprint original receipts, with no edit, delete, selection or bulk controls. Only ADMIN may mutate reports. Unknown HPP/profit displays as `-`; adjusted details show “Disesuaikan Admin” without internal technical identifiers.
+
 - Active ADMIN, CASHIER, and FINANCE may read the existing Daily Report, including its daily summary, shift reconciliation and successful-payment transaction rows, and reprint paid receipts from that report across shifts. This supersedes section 5's ADMIN-only reporting and FINANCE receipt restriction only for these read-only report operations; other operational permissions remain unchanged.
 - Report page and read/reprint actions use fresh server authentication. No client-supplied actor or role is authoritative. Existing POS/order-history receipt visibility remains unchanged.
 - The final Aksi column provides detail and receipt reprint controls. Detail displays saved report values in Asia/Jakarta, retaining neutral unsupported fields and unknown historical costs.

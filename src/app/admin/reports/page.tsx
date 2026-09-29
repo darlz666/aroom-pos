@@ -3,6 +3,7 @@ import { requireReportReader } from "@/lib/auth/authorization";
 import { getDailyReportAction } from "@/lib/reports/action";
 import { jakartaBusinessDate } from "@/lib/reports/domain";
 import { DailyReportPanel } from "./daily-report";
+import { FinanceNavigation } from "../../finance-navigation";
 
 export default async function ReportsPage() {
   const actor = await requireReportReader();
@@ -12,7 +13,7 @@ export default async function ReportsPage() {
     <div className="mx-auto max-w-6xl space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-3xl font-semibold">Laporan harian</h1>
-        <Link href={actor.role === "ADMIN" ? "/admin" : "/"} className="inline-flex min-h-12 items-center rounded-lg border border-[#a8aea0] px-5 font-semibold">Kembali</Link>
+        {actor.role === "FINANCE" ? <FinanceNavigation current="report" /> : <Link href={actor.role === "ADMIN" ? "/admin" : "/"} className="inline-flex min-h-12 items-center rounded-lg border border-[#a8aea0] px-5 font-semibold">Kembali</Link>}
       </header>
       <DailyReportPanel initialDate={date} initial={initial} role={actor.role} />
     </div>

@@ -49,6 +49,9 @@ test("root authenticates first and renders only permitted state and staff fields
     "@/lib/shifts/actions": { getActiveShiftAction: async () => { reads++; return state; } },
     "./open-shift-form": { OpenShiftForm },
     "./close-shift-form": { CloseShiftForm },
+    react: { Suspense: "Suspense" },
+    "./finance-dashboard": { FinanceDashboard: "FinanceDashboard" },
+    "./finance-navigation": { FinanceNavigation: "FinanceNavigation" },
   });
   await assert.rejects(async () => page.default(), /redirect login/);
   assert.equal(reads, 0);
@@ -59,9 +62,10 @@ test("root authenticates first and renders only permitted state and staff fields
   for (role of ["FINANCE"]) {
     const landing = await page.default();
     assert.equal(reads, 0);
-    assert.match(text(landing), /Lihat resep & HPP/);
-    assert.match(text(landing), /Logout/);
-    assert.deepEqual(elements(landing).filter(e => e.props.href).map(e => e.props.href), ["/recipes"]);
+    assert.match(text(landing), /AROOM Coffee Bar/);
+    assert.ok(elements(landing).some(e => e.type === "FinanceDashboard"));
+    assert.ok(elements(landing).some(e => e.type === "FinanceNavigation"));
+    assert.deepEqual(elements(landing).filter(e => e.props.href).map(e => e.props.href), []);
     assert.ok(!elements(landing).some(e => e.type === OpenShiftForm || e.type === CloseShiftForm));
     assert.doesNotMatch(JSON.stringify(landing), /private-/);
   }

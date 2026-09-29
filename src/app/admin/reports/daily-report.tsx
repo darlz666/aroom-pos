@@ -26,7 +26,7 @@ export function DailyReportSummary({ report, role = "", selection }: { report: D
       <p>Penjualan mengikuti tanggal dan penyesuaian Admin. Potongan channel tidak mengurangi total penjualan. Transaksi yang dihapus dari laporan tidak termasuk. Ringkasan saat dimuat.</p>
       <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {([
-          ["Total penjualan lunas", rupiah(report.paidSales)], ["Pesanan lunas", report.paidOrderCount],
+          ["Total Penjualan", rupiah(report.paidSales)], ["Pesanan Lunas", report.paidOrderCount],
           ["Tunai", rupiah(report.cashTotal)], ["BCA EDC", rupiah(report.edcTotal)], ["QRIS", rupiah(report.qrisTotal)],
         ] as const).map(([label, value]) => <div key={label} className="rounded-xl border border-[#dedfd5] bg-[#fffefa] p-5">
           <dt>{label}</dt><dd className="mt-2 text-2xl font-semibold tabular-nums">{value}</dd>

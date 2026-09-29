@@ -5,6 +5,36 @@ import type { PaymentMethod, PaymentStatus, OrderStatus, PrismaClient, ShiftStat
 import { businessDateRange, jakartaBusinessDate } from "./domain";
 
 const admin = { id: "admin", role: "ADMIN" as const };
+
+test("Finance report uses latest adjusted gross amounts for all methods and queries only non-void orders", async () => {
+  const { getDailyReport } = await import("./service");
+  const methods = ["CASH", "BCA_EDC", "MIDTRANS_QRIS"] as const;
+  const rows = methods.map(method => ({ ...payment(method, 22000), order: {
+    ...payment().order,
+    adjustments: [{ revision: 2, orderNumber: `Adjusted ${method}`, effectivePaidAt: start,
+      channelFee: 5000, items: [{ productName: "Saved adjustment", quantity: 2, unitSellingPrice: 30000, unitHpp: 10000 }] }],
+  } }));
+  const before = structuredClone(rows);
+  const db = { $transaction: async (work: (tx: unknown) => unknown) => work({
+    payment: { findMany: async (query: { where: { order: { transactionVoid: unknown } }; select: { order: { select: { adjustments: { take: number; orderBy: unknown } } } } }) => {
+      assert.equal(query.where.order.transactionVoid, null);
+      assert.equal(query.select.order.select.adjustments.take, 1);
+      assert.deepEqual(query.select.order.select.adjustments.orderBy, { revision: "desc" });
+      return rows;
+    } },
+    shift: { findMany: async () => [] },
+  }) } as unknown as PrismaClient;
+  const report = await getDailyReport(db, { id: "finance", role: "FINANCE" }, "2026-09-17");
+  assert.equal(report.paidSales, 180000);
+  assert.equal(report.paidOrderCount, 3);
+  assert.deepEqual([report.cashTotal, report.edcTotal, report.qrisTotal], [60000, 60000, 60000]);
+  for (const row of report.transactions) {
+    assert.equal(row.totalRevenue, 60000); assert.equal(row.hpp, 20000);
+    assert.equal(row.grossProfit, 40000); assert.equal(row.netRevenue, 35000);
+    assert.equal(row.channelFee, 5000); assert.equal(row.revision, 2);
+  }
+  assert.deepEqual(rows, before);
+});
 const start = new Date("2026-09-16T17:00:00.000Z");
 const end = new Date("2026-09-17T17:00:00.000Z");
 const payment = (method: PaymentMethod = "CASH", amount = 22000, time = start) => ({

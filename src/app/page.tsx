@@ -1,5 +1,8 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
+import { Suspense } from "react";
+import { FinanceDashboard } from "./finance-dashboard";
+import { FinanceNavigation } from "./finance-navigation";
 import { logoutAction } from "@/lib/auth/actions";
 import { requireUser } from "@/lib/auth/authorization";
 import { getActiveShiftAction } from "@/lib/shifts/actions";
@@ -17,12 +20,14 @@ export default async function Home() {
 
   if (user.role === "STOCK_MANAGEMENT") redirect("/inventory");
   if (user.role === "FINANCE") {
-    return <main lang="id" className="flex flex-1 flex-col items-center justify-center gap-6 bg-[#f6f4ef] p-8 text-center text-[#292e28]">
-      <h1 className="text-3xl font-semibold">Finance</h1>
-      <p className="text-lg">{user.name}</p>
-      <Link href="/admin/reports" className="inline-flex min-h-14 items-center rounded-lg border border-[#a8aea0] px-6 py-3 font-semibold">Laporan harian</Link>
-      <Link href="/recipes" className="inline-flex min-h-14 items-center rounded-lg border border-[#a8aea0] px-6 py-3 font-semibold">Lihat resep &amp; HPP</Link>
-      <form action={logout}><button type="submit" className="min-h-14 rounded-lg border border-[#a8aea0] px-6 py-3 font-semibold">Logout</button></form>
+    return <main lang="id" className="min-w-0 flex-1 bg-[#f6f4ef] p-6 text-[#292e28] sm:p-10">
+      <div className="mx-auto max-w-6xl space-y-10">
+        <header className="flex flex-wrap items-center justify-between gap-5 border-b border-[#dedfd5] pb-6">
+          <div><p className="text-2xl font-semibold">AROOM Coffee Bar</p><h1 className="mt-1 text-lg text-[#62685c]">Finance</h1></div>
+          <FinanceNavigation current="dashboard" />
+        </header>
+        <Suspense fallback={<p role="status">Memuat laporan hari ini…</p>}><FinanceDashboard /></Suspense>
+      </div>
     </main>;
   }
   const register = await getActiveShiftAction();
