@@ -7,14 +7,15 @@ import ts from "typescript";
 import { ReportError } from "../../../lib/reports/domain";
 
 const require = createRequire(import.meta.url);
-function load(file: string, mocks: Record<string, unknown>) {
+function load(file: string, mocks: Record<string, unknown>, globals: Record<string, unknown> = {}) {
   // Execute the real modules with isolated Next/request boundaries, like POS UI tests.
   const exports: Record<string, (...args: any[]) => any> = {}; // eslint-disable-line @typescript-eslint/no-explicit-any
   const code = ts.transpileModule(readFileSync(new URL(file, import.meta.url), "utf8"), { compilerOptions: {
     jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020,
   } }).outputText;
-  runInNewContext(code, { exports, require: (id: string) => {
+  runInNewContext(code, { ...globals, exports, require: (id: string) => {
     if (id in mocks) return mocks[id];
+    if (id === "./transaction-editor") return { TransactionEditor: "Editor" };
     if (id === "./transaction-actions") return { TransactionActions: "Actions" };
     if (id === "../orders/receipt") return {};
     if (id === "react/jsx-runtime") return require(id);
@@ -128,7 +129,7 @@ test("transaction table follows reconciliation, formats saved values and disting
   const transaction = { orderId: "order", orderNumber: "AROOM-001", paidAt: "2026-09-16T17:05:00.000Z",
     customerLabel: null, productsLabel: "Americano x2, Aroomsbrew x1", quantity: 3, paymentMethod: "CASH",
     sellingPrice: 66000, totalRevenue: 66000, voucherDiscount: 0, posPromo: 0, receivable: 0,
-    hpp: null, adsCost: 0, totalDiscount: 0, grossProfit: null, netRevenue: null };
+    hpp: null, channelFee: 0, adsCost: 0, totalDeductions: 0, grossProfit: null, netRevenue: null };
   for (const [method, label] of [["CASH", "Tunai"], ["BCA_EDC", "BCA EDC"], ["MIDTRANS_QRIS", "QRIS"]]) {
     const tree = summary({ report: { ...report, transactions: [{ ...transaction, paymentMethod: method }] } });
     assert.deepEqual(elements(tree).filter(e => e.type === "section").map(e => e.props["aria-label"]),
@@ -138,29 +139,29 @@ test("transaction table follows reconciliation, formats saved values and disting
     const rows = elements(table).filter(e => e.type === "tr");
     assert.equal(rows.length, 2);
     assert.deepEqual(elements(rows[0]).filter(e => e.type === "th").map(text),
-      ["No. Pesanan", "Tanggal", "Jam", "Pelanggan / Meja", "Produk", "Qty", "Status Pembayaran", "Harga Jual", "Total Omzet", "Diskon Voucher", "Promo POS", "Piutang", "HPP", "Iklan", "Total Potongan", "Gross Profit", "Pendapatan Bersih", "Aksi"]);
+      ["No. Pesanan", "Tanggal", "Jam", "Pelanggan / Meja", "Produk", "Qty", "Status Pembayaran", "Harga Jual", "Total Omzet", "Diskon Voucher", "Promo POS", "Piutang", "HPP", "Potongan Channel", "Iklan", "Total Potongan / Beban", "Gross Profit", "Pendapatan Bersih", "Aksi"]);
     const cells = elements(rows[1]).filter(e => e.type === "td" || e.type === "th").map(e => text(e).replace(/\s+/g, " "));
-    assert.equal(cells.length, 18);
+    assert.equal(cells.length, 19);
     assert.equal(cells[0], "AROOM-001");
     assert.equal(cells[1], "17/09/2026");
     assert.equal(cells[2], "00:05 WIB");
     assert.deepEqual(cells.slice(3, 17), ["-", "Americano x2, Aroomsbrew x1", "3", `Lunas · ${label}`,
-      "Rp66.000", "Rp66.000", "Rp0", "Rp0", "Rp0", "-", "Rp0", "Rp0", "-", "-"]);
+      "Rp66.000", "Rp66.000", "Rp0", "Rp0", "Rp0", "-", "Rp0", "Rp0", "Rp0", "-"]);
   }
 });
 
-function harness(value: unknown = initial) {
+function harness(value: unknown = initial, role = "") {
   const slots: unknown[] = [];
   let index = 0;
   const requests: { date: unknown; resolve: (value: unknown) => void; reject: (e: Error) => void }[] = [];
   const { DailyReportPanel: panel } = load("./daily-report.tsx", {
     react: {
-      useState: (initialValue: unknown) => { const i = index++; if (!(i in slots)) slots[i] = initialValue; return [slots[i], (v: unknown) => { slots[i] = v; }]; },
+      useState: (initialValue: unknown) => { const i = index++; if (!(i in slots)) slots[i] = initialValue; return [slots[i], (v: unknown) => { slots[i] = typeof v === "function" ? v(slots[i]) : v; }]; },
       useRef: (initialValue: unknown) => { const i = index++; if (!(i in slots)) slots[i] = { current: initialValue }; return slots[i]; },
     },
     "@/lib/reports/action": { getDailyReportAction: (date: unknown) => new Promise((resolve, reject) => requests.push({ date, resolve, reject })) },
   });
-  const render = () => { index = 0; return panel({ initialDate: report.businessDate, initial: value }); };
+  const render = () => { index = 0; return panel({ initialDate: report.businessDate, initial: value, role }); };
   const find = (type: string) => elements(render()).find(e => e.type === type)!;
   return { requests, render,
     submit() { (find("form").props.onSubmit as (event: unknown) => void)({ preventDefault() {} }); },
@@ -213,7 +214,7 @@ test("initial and transport failures show explicit retry without zero or stale t
 const transaction = { orderId: "saved-order", orderNumber: "AR-42", paidAt: "2026-09-16T17:05:00.000Z",
   customerLabel: null, productsLabel: "Saved coffee x2", quantity: 2, paymentMethod: "CASH",
   sellingPrice: 43000, totalRevenue: 44000, voucherDiscount: 0, posPromo: 0, receivable: 0,
-  hpp: null, adsCost: 0, totalDiscount: 0, grossProfit: null, netRevenue: null };
+  hpp: null, channelFee: 0, adsCost: 0, totalDeductions: 0, grossProfit: null, netRevenue: null };
 
 function actionHarness(component: string, props: Record<string, unknown>, mocks: Record<string, unknown> = {}) {
   const slots: unknown[] = [];
@@ -230,18 +231,19 @@ function actionHarness(component: string, props: Record<string, unknown>, mocks:
   return { render, module: loaded };
 }
 
-test("role-specific action buttons select the correct saved transaction; admin mutations are disabled", () => {
+test("role-specific action buttons select the correct saved transaction; only admin can invoke mutations", () => {
   for (const role of ["ADMIN", "CASHIER", "FINANCE"]) {
-    const h = actionHarness("TransactionActions", { transaction, role });
+    let invoked = 0;
+    const h = actionHarness("TransactionActions", { transaction, role, onEdit: () => invoked++, onVoid: () => invoked++ });
     const buttons = elements(h.render()).filter(e => e.type === "button");
     assert.deepEqual(buttons.map(e => e.props["aria-label"]), role === "ADMIN"
       ? ["Lihat detail", "Edit transaksi", "Cetak ulang struk", "Hapus transaksi"]
       : ["Lihat detail", "Cetak ulang struk"]);
     for (const e of buttons.filter(e => /Edit|Hapus/.test(String(e.props["aria-label"])))) {
-      assert.equal(e.props.disabled, true);
-      assert.equal(e.props.onClick, undefined);
-      assert.match(String(e.props.title), /Belum didukung/);
+      assert.ok(!e.props.disabled);
+      (e.props.onClick as () => void)();
     }
+    assert.equal(invoked, role === "ADMIN" ? 2 : 0);
     (buttons[0].props.onClick as () => void)();
     const modal = elements(h.render()).find(e => e.type === h.module.TransactionModal)!;
     assert.equal(modal.props.transaction, transaction);
@@ -259,6 +261,23 @@ test("detail displays saved values, WIB and placeholders without calculating tot
   const content = text(h.render());
   for (const value of ["Saved coffee x2", "AR-42", "17/09/2026", "00:05 WIB", "Tunai", "Rp43.000", "Rp44.000", "Qty 2", "HPP -", "Gross Profit -", "Pendapatan Bersih -"]) assert.ok(content.includes(value), value);
   assert.equal(elements(h.render()).filter(e => e.type === "button" || e.type === "input").length, 0);
+  const adjusted = text(actionHarness("TransactionDetails", { transaction: { ...transaction, revision: 42 } }).render());
+  assert.match(adjusted, /Disesuaikan Admin/);
+  assert.doesNotMatch(adjusted, /revision|idempotency|immutable/);
+});
+
+test("report mutations reject Finance and Cashier even when input forges Admin role", async () => {
+  let reads = 0;
+  for (const role of ["FINANCE", "CASHIER", "STOCK_MANAGEMENT"]) {
+    const actions = load("../../../lib/reports/adjustment-action.ts", {
+      "next/navigation": { unstable_rethrow(error: unknown) { throw error; } },
+      "../auth/authorization": { requireRole(required: string) { assert.equal(required, "ADMIN"); throw new Error(`denied ${role}`); } },
+      "../db": { prisma: {} }, "./adjustment-domain": {},
+      "./adjustment-service": { adjustTransaction() { reads++; }, voidTransactions() { reads++; } },
+    });
+    for (const name of ["adjustTransactionAction", "voidTransactionsAction"]) await assert.rejects(actions[name]({ role: "ADMIN" }), /denied/);
+  }
+  assert.equal(reads, 0);
 });
 
 test("report reprint guards rapid clicks, read and printer failures, marks COPY, and never changes row data", async () => {
@@ -353,4 +372,83 @@ test("report print completion is terminal even for stale handlers and in-flight 
   finish(); await flush();
   assert.match(text(h.render()), /Permintaan cetak berhasil/);
   click(); await flush(); assert.equal(reads, 1); assert.equal(prints, 1);
+});
+
+
+test("admin selection supports individual, multiple, all, confirmation and resets on dataset changes", async () => {
+  const rows = [1, 2, 3].map(i => ({ ...transaction, orderId: String(i), orderNumber: 'AR-' + i }));
+  const h = harness({ success: true, report: { ...report, transactions: rows } }, "ADMIN");
+  const props = () => elements(h.render()).find(e => typeof e.type === "function")!.props;
+  type Selection = { ids: string[]; toggle: (id: string) => void; all: () => void; remove: (rows: unknown[]) => void };
+  const selection = () => props().selection as Selection;
+  selection().toggle("1"); assert.deepEqual(Array.from(selection().ids), ["1"]);
+  selection().toggle("2"); assert.deepEqual(Array.from(selection().ids), ["1", "2"]);
+  selection().toggle("1"); assert.deepEqual(Array.from(selection().ids), ["2"]);
+  selection().all(); assert.deepEqual(Array.from(selection().ids), ["1", "2", "3"]);
+  selection().remove(rows);
+  const editor = elements(h.render()).find(e => e.type === "Editor")!;
+  assert.equal(editor.props.mode, "void"); assert.equal(editor.props.transactions, rows);
+  assert.equal(h.requests.length, 0); // Opening confirmation performs no mutation/read.
+  (editor.props.onSaved as () => void)();
+  assert.equal(h.requests.length, 1); assert.equal(h.summary(), undefined);
+  h.requests[0].resolve({ success: true, report: { ...report, transactions: rows.slice(1) } }); await flush();
+  assert.deepEqual(Array.from(selection().ids), []);
+  selection().all(); h.change("2026-09-18"); assert.equal(h.summary(), undefined);
+  const { DailyReportSummary: summary } = load("./daily-report.tsx", { react: {}, "@/lib/reports/action": {} });
+  for (const role of ["CASHIER", "FINANCE"]) {
+    const tree = summary({ report: { ...report, transactions: rows }, role });
+    assert.equal(elements(tree).filter(e => e.props.type === "checkbox").length, 0);
+    assert.doesNotMatch(text(tree), /Pilih semua|Hapus Terpilih/);
+  }
+});
+
+
+function editorHarness(mode = "edit") {
+  const slots: unknown[] = [];
+  let index = 0, saved = 0, closed = 0;
+  const calls: { input: unknown; resolve: (value: unknown) => void; reject: (e: Error) => void }[] = [];
+  const network = { onLine: true };
+  const submit = (input: unknown) => new Promise((resolve, reject) => calls.push({ input, resolve, reject }));
+  const editorModule = load("./transaction-editor.tsx", {
+    react: {
+      useState(value: unknown) { const i = index++; if (!(i in slots)) slots[i] = value; return [slots[i], (v: unknown) => { slots[i] = typeof v === "function" ? v(slots[i]) : v; }]; },
+      useRef(value: unknown) { const i = index++; if (!(i in slots)) slots[i] = { current: value }; return slots[i]; },
+      useEffect() {},
+    },
+    "@/lib/reports/domain": { jakartaBusinessDate: () => "2026-09-17" },
+    "@/lib/reports/adjustment-action": { adjustTransactionAction: submit, voidTransactionsAction: submit },
+  }, { navigator: network, crypto: { randomUUID: () => "key" } });
+  const render = () => { index = 0; return editorModule.TransactionEditor({ mode, businessDate: "2026-09-17", onSaved: () => saved++, onClose: () => closed++,
+    transactions: [{ ...transaction, revision: 2, channelFee: 4000, items: [{ productName: "Adjusted", quantity: 2, unitSellingPrice: 22000, unitHpp: null }] }] }); };
+  const send = () => (elements(render()).find(e => e.type === "form")!.props.onSubmit as (e: unknown) => void)({ preventDefault() {} });
+  const button = (label: string) => elements(render()).find(e => e.type === "button" && text(e) === label)!;
+  return { calls, network, render, send, button, get saved() { return saved; }, get closed() { return closed; } };
+}
+test("editor uses effective items, sends only allowed inputs and preserves an uncertain intent for retry", async () => {
+  const h = editorHarness();
+  assert.match(text(h.render()), /Edit Grup Pesanan/);
+  const inputs = elements(h.render()).filter(e => e.type === "input");
+  assert.ok(inputs.some(e => e.props.value === "Adjusted"));
+  assert.ok(inputs.some(e => e.props['aria-label'] === "HPP 1" && e.props.value === ""));
+  h.network.onLine = false; h.send(); assert.equal(h.calls.length, 0);
+  h.network.onLine = true; h.send(); h.send(); assert.equal(h.calls.length, 1);
+  const intent = h.calls[0].input as Record<string, unknown>;
+  assert.equal(intent.expectedRevision, 2); assert.equal(intent.channelFee, 4000);
+  assert.ok(!('actorId' in intent) && !('role' in intent));
+  h.calls[0].reject(new Error("lost response")); await flush();
+  assert.equal(h.saved, 0); assert.equal(h.button("Batal").props.disabled, true);
+  h.send(); assert.equal(h.calls[1].input, intent);
+  h.calls[1].resolve({ success: true }); await flush(); assert.equal(h.saved, 1);
+});
+test("void requires confirmation; cancellation sends nothing; errors do not report success", async () => {
+  const cancelled = editorHarness("void");
+  assert.match(text(cancelled.render()), /histori asli tetap disimpan/);
+  (cancelled.button("Batal").props.onClick as () => void)();
+  assert.equal(cancelled.closed, 1); assert.equal(cancelled.calls.length, 0);
+  const h = editorHarness("void"); h.send(); h.send();
+  assert.equal(h.calls.length, 1);
+  const intent = h.calls[0].input as { transactions: unknown[] };
+  assert.equal(intent.transactions.length, 1);
+  h.calls[0].resolve({ success: false, code: "CONFLICT", error: "Muat ulang" }); await flush();
+  assert.equal(h.saved, 0); assert.ok(!h.button("Batal").props.disabled);
 });

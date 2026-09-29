@@ -6,7 +6,6 @@ import type { ReportTransaction } from "@/lib/reports/service";
 import { createReceiptPrintJob } from "@/lib/printing/printer";
 
 const button = "inline-flex min-h-12 min-w-12 items-center justify-center rounded-lg border border-[#a8aea0] px-3 py-2 font-semibold hover:bg-[#e9eade] focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-40";
-const unsupported = "Belum didukung: transaksi lunas tidak dapat diedit atau dihapus.";
 const money = (value: number | null) => value === null ? "-" : `Rp${new Intl.NumberFormat("id-ID").format(value)}`;
 const date = (value: string, time = false) => new Intl.DateTimeFormat("en-GB", {
   timeZone: "Asia/Jakarta", ...(time ? { hour: "2-digit", minute: "2-digit", hourCycle: "h23" } as const :
@@ -23,33 +22,40 @@ function Icon({ kind }: { kind: "eye" | "pencil" | "printer" | "trash" }) {
   return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[kind]}</svg>;
 }
 
-export function TransactionActions({ transaction, role }: { transaction: ReportTransaction; role: string }) {
+export function TransactionActions({ transaction, role, onEdit, onVoid }: { transaction: ReportTransaction; role: string; onEdit?: () => void; onVoid?: () => void }) {
   const [mode, setMode] = useState<"detail" | "print" | null>(null);
   if (!["ADMIN", "CASHIER", "FINANCE"].includes(role)) return null;
   return <>
     <div className="flex gap-2">
       <button type="button" className={button} aria-label="Lihat detail" title="Lihat detail" onClick={() => setMode("detail")}><Icon kind="eye" /></button>
-      {role === "ADMIN" && <button type="button" className={button} aria-label="Edit transaksi" title={unsupported} disabled><Icon kind="pencil" /></button>}
+      {role === "ADMIN" && <button type="button" className={button} aria-label="Edit transaksi" title="Edit transaksi" onClick={onEdit}><Icon kind="pencil" /></button>}
       <button type="button" className={button} aria-label="Cetak ulang struk" title="Cetak ulang struk" onClick={() => setMode("print")}><Icon kind="printer" /></button>
-      {role === "ADMIN" && <button type="button" className={button} aria-label="Hapus transaksi" title={unsupported} disabled><Icon kind="trash" /></button>}
+      {role === "ADMIN" && <button type="button" className={button} aria-label="Hapus transaksi" title="Hapus transaksi" onClick={onVoid}><Icon kind="trash" /></button>}
     </div>
     {mode && <TransactionModal transaction={transaction} mode={mode} onClose={() => setMode(null)} />}
   </>;
 }
 
 export function TransactionDetails({ transaction: t }: { transaction: ReportTransaction }) {
-  const fields: [string, ReactNode][] = [
-    ["Produk", t.productsLabel], ["No. Pesanan", t.orderNumber], ["Tanggal", date(t.paidAt)],
-    ["Jam", `${date(t.paidAt, true)} WIB`], ["Pelanggan / Meja", t.customerLabel ?? "-"],
-    ["Metode Bayar", { CASH: "Tunai", BCA_EDC: "BCA EDC", MIDTRANS_QRIS: "QRIS" }[t.paymentMethod]],
-    ["Harga Jual", money(t.sellingPrice)], ["Total Omzet", money(t.totalRevenue)], ["Qty", t.quantity],
-    ["Diskon Voucher", money(t.voucherDiscount)], ["Promo POS", money(t.posPromo)], ["Piutang", money(t.receivable)],
-    ["HPP", money(t.hpp)], ["Iklan", money(t.adsCost)], ["Total Potongan", money(t.totalDiscount)],
-    ["Gross Profit", money(t.grossProfit)], ["Pendapatan Bersih", money(t.netRevenue)],
+  const groups: [string, [string, ReactNode][]][] = [
+    ["Identitas", [["No. Pesanan", t.orderNumber], ["Tanggal Pembayaran", date(t.paidAt)],
+      ["Jam", `${date(t.paidAt, true)} WIB`], ["Pelanggan / Meja", t.customerLabel ?? "-"],
+      ["Metode Pembayaran", { CASH: "Tunai", BCA_EDC: "BCA EDC", MIDTRANS_QRIS: "QRIS" }[t.paymentMethod]]]],
+    ["Produk", [["Produk", t.productsLabel], ["Qty", t.quantity], ["Harga Jual", money(t.sellingPrice)]]],
+    ["Ringkasan Keuangan", [["Total Omzet", money(t.totalRevenue)], ["HPP", money(t.hpp)], ["Gross Profit", money(t.grossProfit)]]],
+    ["Beban", [["Potongan Channel", money(t.channelFee)], ["Iklan", money(t.adsCost)],
+      ["Diskon Voucher", money(t.voucherDiscount)], ["Promo POS", money(t.posPromo)], ["Total Potongan", money(t.totalDeductions)]]],
+    ["Hasil", [["Pendapatan Bersih", money(t.netRevenue)], ["Piutang", money(t.receivable)]]],
   ];
-  return <dl className="grid gap-4 sm:grid-cols-2">{fields.map(([label, value]) => <div key={label}>
-    <dt className="text-sm text-[#62685c]">{label}</dt><dd className="break-words font-semibold tabular-nums">{value}</dd>
-  </div>)}</dl>;
+  return <div className="space-y-6">
+    {t.revision > 0 && <span className="inline-block rounded-full bg-[#e9eade] px-3 py-1 text-sm">Disesuaikan Admin</span>}
+    {groups.map(([title, fields]) => <section key={title} aria-label={title} className="space-y-3 border-t border-[#dedfd5] pt-4">
+      <h3 className="text-lg font-semibold">{title}</h3>
+      <dl className="grid gap-4 sm:grid-cols-2">{fields.map(([label, value]) => <div key={label}>
+        <dt className="text-sm text-[#62685c]">{label}</dt><dd className="break-words font-semibold tabular-nums">{value}</dd>
+      </div>)}</dl>
+    </section>)}
+  </div>;
 }
 
 export function TransactionModal({ transaction, mode, onClose }: {
@@ -88,6 +94,7 @@ export function TransactionModal({ transaction, mode, onClose }: {
         <button type="button" className={button} aria-label="Tutup" disabled={pending} onClick={onClose}>Tutup</button>
       </header>
       {mode === "detail" ? <TransactionDetails transaction={transaction} /> : <p>{transaction.orderNumber} · COPY / SALINAN</p>}
+      <p className="text-sm">Cetak ulang menggunakan struk pembayaran asli. Penyesuaian laporan tidak mengubah bukti pembayaran.</p>
       {pending && <p role="status">{state === "loading" ? "Memuat struk…" : "Mencetak struk…"}</p>}
       {error && <p role="alert" className="text-[#8b3026]">{error}</p>}
       {state === "done" && <p role="status">Permintaan cetak berhasil.</p>}

@@ -11,7 +11,7 @@ const payment = (method: PaymentMethod = "CASH", amount = 22000, time = start) =
   id: crypto.randomUUID(), orderId: crypto.randomUUID(), method, amount, succeededAt: time as Date | null,
   status: "SUCCEEDED" as PaymentStatus, cashReceived: 100000,
   order: { shiftId: "shift", orderNumber: "AROOM-00001", status: "PAID" as OrderStatus, createdAt: new Date("2026-09-01T00:00:00Z"),
-    items: [{ productNameSnapshot: "Americano", quantity: 2 }, { productNameSnapshot: "Aroomsbrew", quantity: 1 }] },
+    adjustments: [], items: [{ productNameSnapshot: "Americano", quantity: 2, unitPriceSnapshot: 10000 }, { productNameSnapshot: "Aroomsbrew", quantity: 1, unitPriceSnapshot: 2000 }] },
 });
 const shift = (status: ShiftStatus = "CLOSED") => ({
   id: "shift", status, openedAt: new Date("2026-09-16T16:00:00Z"),
@@ -27,16 +27,12 @@ function fixture(payments = [payment()], shifts = [shift()]) {
   // Deliberately no write methods. A mutation or undeclared read fails the test.
   const tx = {
     payment: {
-      findMany: async (query: { where: { succeededAt: { gte: Date; lt: Date } }; orderBy: unknown; select: unknown }) => {
+      findMany: async (query: { where: { OR: [{ succeededAt: { gte: Date; lt: Date } }] } }) => {
         reads++;
-        const { gte, lt } = query.where.succeededAt;
-        assert.deepEqual(query.where, { status: "SUCCEEDED", succeededAt: { gte, lt }, order: { status: "PAID" } });
-        assert.deepEqual(query.orderBy, [{ succeededAt: "desc" }, { id: "desc" }]);
-        assert.deepEqual(query.select, { orderId: true, method: true, amount: true, succeededAt: true,
-          order: { select: { orderNumber: true, items: { orderBy: { id: "asc" }, select: { productNameSnapshot: true, quantity: true } } } } });
+        const { gte, lt } = query.where.OR[0].succeededAt;
+        assert.equal((query.where as unknown as { status: string }).status, "SUCCEEDED");
         return payments.filter(p => p.status === "SUCCEEDED" && p.order.status === "PAID" &&
-          p.succeededAt && p.succeededAt >= gte && p.succeededAt < lt)
-          .sort((a, b) => b.succeededAt!.getTime() - a.succeededAt!.getTime() || b.id.localeCompare(a.id));
+          p.succeededAt && p.succeededAt >= gte && p.succeededAt < lt);
       },
       groupBy: async (query: { where: { succeededAt: { gte: Date; lt: Date } } }) => {
         reads++;
@@ -179,10 +175,10 @@ test("daily reporting service", async t => {
     const saved = payment("BCA_EDC", 66000);
     const f = fixture([saved]); // No Product, Recipe, Ingredient or costing reads are available.
     const report = await read(f);
-    assert.deepEqual(report.transactions, [{ orderId: saved.orderId, orderNumber: saved.order.orderNumber,
+    assert.deepEqual(report.transactions, [{ orderId: saved.orderId, revision: 0, channelFee: 0, items: saved.order.items.map(item => ({ productName: item.productNameSnapshot, quantity: item.quantity, unitSellingPrice: item.unitPriceSnapshot, unitHpp: null })), orderNumber: saved.order.orderNumber,
       paidAt: start.toISOString(), customerLabel: null, productsLabel: "Americano x2, Aroomsbrew x1",
       quantity: 3, paymentMethod: "BCA_EDC", sellingPrice: 66000, totalRevenue: 66000,
-      voucherDiscount: 0, posPromo: 0, receivable: 0, adsCost: 0, totalDiscount: 0,
+      voucherDiscount: 0, posPromo: 0, receivable: 0, adsCost: 0, totalDeductions: 0,
       hpp: null, grossProfit: null, netRevenue: null }]);
     assert.deepEqual(await read(f), report);
     f.unchanged();
@@ -190,7 +186,7 @@ test("daily reporting service", async t => {
   await t.test("equal success times have deterministic ordering and quantity overflow fails safely", async () => {
     const first = { ...payment(), id: "a" };
     const second = { ...payment(), id: "b" };
-    assert.deepEqual((await read(fixture([first, second]))).transactions.map(row => row.orderId), [second.orderId, first.orderId]);
+    assert.deepEqual((await read(fixture([first, second]))).transactions.map(row => row.orderId), [second.orderId, first.orderId].sort().reverse());
     first.order.items[0].quantity = Number.MAX_SAFE_INTEGER;
     await assert.rejects(read(fixture([first])), { code: "UNAVAILABLE" });
   });

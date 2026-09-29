@@ -77,6 +77,8 @@ model User {
   auditLogs       AuditLog[]
   stockMovements  StockMovement[]
   stockIns        StockIn[]
+  transactionAdjustments TransactionAdjustment[]
+  transactionVoids TransactionVoid[]
 }
 
 model Category {
@@ -141,6 +143,8 @@ model Order {
   cashier                  User        @relation(fields: [cashierId], references: [id], onDelete: Restrict)
   items                    OrderItem[]
   payments                 Payment[]
+  adjustments              TransactionAdjustment[]
+  transactionVoid          TransactionVoid?
 
   @@index([shiftId])
   @@index([cashierId])
@@ -218,6 +222,54 @@ model AuditLog {
 
   @@index([actorId])
   @@index([entityType, entityId, createdAt])
+}
+
+// Reporting overrides only. Original order/payment/stock evidence is untouched.
+// SQL rejects updates and deletes; revision is serialized under the Order lock.
+model TransactionAdjustment {
+  id                 String @id @default(uuid()) @db.Uuid
+  orderId            String @db.Uuid
+  revision           Int
+  idempotencyKey     String @unique @db.Uuid
+  requestFingerprint String
+  createdAt          DateTime @default(now()) @db.Timestamptz(3)
+  actorId            String @db.Uuid
+  effectivePaidAt    DateTime @db.Timestamptz(3)
+  orderNumber        String
+  channelFee         Int
+  reason             String?
+  order              Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  actor              User @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  items              TransactionAdjustmentItem[]
+
+  @@unique([orderId, revision])
+  @@index([effectivePaidAt])
+  @@index([actorId])
+}
+
+model TransactionAdjustmentItem {
+  id               String @id @default(uuid()) @db.Uuid
+  adjustmentId     String @db.Uuid
+  position         Int
+  productName      String
+  quantity         Int
+  unitSellingPrice Int
+  unitHpp          Int?
+  adjustment       TransactionAdjustment @relation(fields: [adjustmentId], references: [id], onDelete: Restrict)
+
+  @@unique([adjustmentId, position])
+}
+
+model TransactionVoid {
+  id                 String @id @default(uuid()) @db.Uuid
+  orderId            String @unique @db.Uuid
+  createdAt          DateTime @default(now()) @db.Timestamptz(3)
+  actorId            String @db.Uuid
+  reason             String?
+  order              Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  actor              User @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([actorId])
 }
 
 model Ingredient {
