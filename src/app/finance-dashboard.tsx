@@ -1,6 +1,6 @@
-import { requireRole } from "@/lib/auth/authorization";
+import { requireFinanceManager } from "@/lib/auth/authorization";
 import { FinanceReportPanel } from "./finance/report-panel";
 export async function FinanceDashboard() {
-  await requireRole("FINANCE");
+  await requireFinanceManager();
   return <FinanceReportPanel mode="dashboard" />;
 }

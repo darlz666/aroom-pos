@@ -11,6 +11,7 @@ export default async function AdminPage() {
       <Link href="/admin/users" className="mt-4 inline-flex min-h-14 items-center rounded-lg border border-[#a8aea0] px-6 py-3 font-semibold">Access Management</Link>
       <Link href="/inventory" className="mt-4 inline-flex min-h-14 items-center rounded-lg border border-[#a8aea0] px-6 py-3 font-semibold">Stock Management</Link>
       <Link href="/recipes" className="mt-4 inline-flex min-h-14 items-center rounded-lg border border-[#a8aea0] px-6 py-3 font-semibold">Resep &amp; HPP</Link>
+      <Link href="/finance" className="mt-4 inline-flex min-h-14 items-center rounded-lg border border-[#a8aea0] px-6 py-3 font-semibold">Dashboard Finance</Link>
       <Link href="/admin/reports" className="mt-4 inline-flex min-h-12 items-center rounded-lg border border-[#a8aea0] px-6 py-3 font-semibold hover:bg-[#e9eade] focus-visible:outline-2 focus-visible:outline-offset-4">Laporan harian</Link>
       <Link href="/" className="mt-4 inline-flex min-h-14 items-center rounded-lg border border-[#a8aea0] px-6 py-3 font-semibold">Kembali ke register</Link>
     </main>

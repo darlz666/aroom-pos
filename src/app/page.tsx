@@ -1,8 +1,5 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { Suspense } from "react";
-import { FinanceDashboard } from "./finance-dashboard";
-import { FinanceNavigation } from "./finance-navigation";
 import { logoutAction } from "@/lib/auth/actions";
 import { requireUser } from "@/lib/auth/authorization";
 import { getActiveShiftAction } from "@/lib/shifts/actions";
@@ -19,17 +16,7 @@ export default async function Home() {
   }
 
   if (user.role === "STOCK_MANAGEMENT") redirect("/inventory");
-  if (user.role === "FINANCE") {
-    return <main lang="id" className="min-w-0 flex-1 bg-[#f5f7f5] px-4 py-6 text-[#23382e] sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-7xl space-y-7">
-        <header className="flex flex-wrap items-center justify-between gap-4 border-b border-[#e2e7e3] pb-5">
-          <div><p className="text-lg font-semibold tracking-tight">AROOM Coffee Bar</p><p className="mt-1 text-xs font-medium tracking-wide text-[#62716a]">Finance</p></div>
-          <FinanceNavigation current="dashboard" />
-        </header>
-        <Suspense fallback={<p role="status">Memuat laporan hari ini…</p>}><FinanceDashboard /></Suspense>
-      </div>
-    </main>;
-  }
+  if (user.role === "FINANCE") redirect("/finance");
   const register = await getActiveShiftAction();
 
   return (

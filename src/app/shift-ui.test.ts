@@ -49,9 +49,6 @@ test("root authenticates first and renders only permitted state and staff fields
     "@/lib/shifts/actions": { getActiveShiftAction: async () => { reads++; return state; } },
     "./open-shift-form": { OpenShiftForm },
     "./close-shift-form": { CloseShiftForm },
-    react: { Suspense: "Suspense" },
-    "./finance-dashboard": { FinanceDashboard: "FinanceDashboard" },
-    "./finance-navigation": { FinanceNavigation: "FinanceNavigation" },
   });
   await assert.rejects(async () => page.default(), /redirect login/);
   assert.equal(reads, 0);
@@ -59,16 +56,9 @@ test("root authenticates first and renders only permitted state and staff fields
   role = "STOCK_MANAGEMENT";
   await assert.rejects(async () => page.default(), /redirect \/inventory/);
   assert.equal(reads, 0);
-  for (role of ["FINANCE"]) {
-    const landing = await page.default();
-    assert.equal(reads, 0);
-    assert.match(text(landing), /AROOM Coffee Bar/);
-    assert.ok(elements(landing).some(e => e.type === "FinanceDashboard"));
-    assert.ok(elements(landing).some(e => e.type === "FinanceNavigation"));
-    assert.deepEqual(elements(landing).filter(e => e.props.href).map(e => e.props.href), []);
-    assert.ok(!elements(landing).some(e => e.type === OpenShiftForm || e.type === CloseShiftForm));
-    assert.doesNotMatch(JSON.stringify(landing), /private-/);
-  }
+  role = "FINANCE";
+  await assert.rejects(async () => page.default(), /redirect \/finance/);
+  assert.equal(reads, 0);
   for (role of ["CASHIER", "ADMIN"]) {
     const empty = await page.default();
     assert.ok(elements(empty).some(e => e.type === OpenShiftForm && Object.keys(e.props).length === 0));

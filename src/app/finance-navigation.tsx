@@ -11,7 +11,7 @@ export function FinanceNavigation({ current }: { current: "dashboard" | "report"
     redirect("/login");
   }
   return <nav aria-label="Finance" className="flex flex-wrap gap-1">
-    <Link href="/" aria-current={current === "dashboard" ? "page" : undefined} className={control}>Dashboard</Link>
+    <Link href="/finance" aria-current={current === "dashboard" ? "page" : undefined} className={control}>Dashboard</Link>
     <Link href="/admin/reports" aria-current={current === "report" ? "page" : undefined} className={control}>Laporan Harian</Link>
     <Link href="/finance/reports/monthly" aria-current={current === "monthly" ? "page" : undefined} className={control}>Laporan Bulanan</Link>
     <Link href="/finance/reports/yearly" aria-current={current === "yearly" ? "page" : undefined} className={control}>Laporan Tahunan</Link>

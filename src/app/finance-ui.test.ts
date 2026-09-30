@@ -31,10 +31,71 @@ function load(file: string, mocks: Record<string, unknown>, globals = {}) {
   return exports;
 }
 
+test("Admin home links Finance and preserves existing destinations in order", async () => {
+  const page = load("./admin/page.tsx", {
+    "next/link": { default: "a" },
+    "@/lib/auth/authorization": { requireRole: async (role: string) => { assert.equal(role, "ADMIN"); return { name: "Admin" }; } },
+  });
+  const links = elements(await page.default()).filter(e => e.props.href);
+  assert.deepEqual(links.map(e => [text(e), e.props.href]), [
+    ["Access Management", "/admin/users"], ["Stock Management", "/inventory"],
+    ["Resep & HPP", "/recipes"], ["Dashboard Finance", "/finance"],
+    ["Laporan harian", "/admin/reports"], ["Kembali ke register", "/"],
+  ]);
+});
+
+test("Finance route and dashboard enforce fresh authorization before rendering report reads", async () => {
+  let session: { userId: string } | null = null;
+  let user: { id: string; role: string; active: boolean } | null = null;
+  let financeReads = 0;
+  const current = load("../lib/auth/current-user.ts", {
+    "server-only": {}, "./session": { getSessionIdentity: async () => session },
+    "./credentials": { safeUserSelect: { id: true, role: true } },
+    "@/lib/db": { prisma: { user: { findFirst: async (query: { where: { active: boolean; id: string } }) => {
+      assert.equal(query.where.active, true);
+      assert.equal(query.where.id, session!.userId);
+      return user?.active ? user : null;
+    } } } },
+  });
+  const guards = load("../lib/auth/authorization.ts", {
+    "server-only": {}, "./current-user": current,
+    "next/navigation": { redirect(path: string) { throw new Error(`redirect ${path}`); } },
+  });
+  const panel = () => { financeReads++; return null; };
+  const dashboard = load("./finance-dashboard.tsx", {
+    "@/lib/auth/authorization": guards,
+    "./finance/report-panel": { FinanceReportPanel: panel },
+  });
+  const page = load("./finance/page.tsx", {
+    "@/lib/auth/authorization": guards, react: { Suspense: "Suspense" },
+    "../finance-dashboard": dashboard,
+    "../finance-navigation": { FinanceNavigation: "navigation" },
+  });
+  for (const role of ["ADMIN", "FINANCE", "CASHIER", "STOCK_MANAGEMENT", "anonymous", "inactive"]) {
+    session = role === "anonymous" ? null : { userId: "current" };
+    user = { id: "current", role: role === "inactive" ? "FINANCE" : role, active: role !== "inactive" };
+    financeReads = 0;
+    if (role === "ADMIN" || role === "FINANCE") {
+      const tree = await page.default();
+      assert.ok(elements(tree).some(e => e.type === dashboard.FinanceDashboard));
+      assert.ok(elements(tree).some(e => e.type === "navigation" && e.props.current === "dashboard"));
+      const report = elements(await dashboard.FinanceDashboard()).find(e => e.type === panel);
+      assert.equal(report?.props.mode, "dashboard");
+      (report!.type as () => void)();
+      assert.equal(financeReads, 1);
+    } else {
+      const expected = role === "anonymous" || role === "inactive" ? /redirect \/login/ : /redirect \/$/;
+      await assert.rejects(async () => page.default(), expected);
+      await assert.rejects(async () => dashboard.FinanceDashboard(), expected);
+      assert.equal(financeReads, 0);
+    }
+  }
+});
+
 test("Finance dashboard authorizes before exposing period reporting", async () => {
   let allowed = false;
   const dashboard = load("./finance-dashboard.tsx", {
-    "@/lib/auth/authorization": { requireRole: async (role: string) => { assert.equal(role, "FINANCE"); if (!allowed) throw new Error("denied"); } },
+    "@/lib/auth/authorization": { requireFinanceManager: async () => { if (!allowed) throw new Error("denied"); } },
     "./finance/report-panel": { FinanceReportPanel: "period-report" },
   });
   await assert.rejects(async () => dashboard.FinanceDashboard(), /denied/);
@@ -52,7 +113,7 @@ test("Finance navigation contains only approved reports, expenses and secure log
   const render = nav.FinanceNavigation as unknown as (props: { current: string }) => unknown;
   for (const current of ["dashboard", "report", "monthly", "yearly", "expenses"]) {
     const tree = render({ current });
-    assert.deepEqual(elements(tree).filter(e => e.props.href).map(e => e.props.href), ["/", "/admin/reports", "/finance/reports/monthly", "/finance/reports/yearly", "/finance/expenses"]);
+    assert.deepEqual(elements(tree).filter(e => e.props.href).map(e => e.props.href), ["/finance", "/admin/reports", "/finance/reports/monthly", "/finance/reports/yearly", "/finance/expenses"]);
     assert.match(text(tree), /Dashboard.*Laporan Harian.*Keluar/);
     assert.doesNotMatch(text(tree), /POS|Stock|Resep|Recipe|Access|Admin|Supplier/);
     assert.equal(elements(tree).filter(e => e.props["aria-current"] === "page").length, 1);
