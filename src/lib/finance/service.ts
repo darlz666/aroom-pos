@@ -1,6 +1,6 @@
 import "server-only";
 import { createHash } from "node:crypto";
-import type { PrismaClient } from "../../generated/prisma/client";
+import type { Prisma, PrismaClient } from "../../generated/prisma/client";
 import type { ShiftActor } from "../shifts/domain";
 import { readEffectiveSales, type ReportTransaction } from "../reports/service";
 import { jakartaBusinessDate } from "../reports/domain";
@@ -73,16 +73,20 @@ export async function getFinanceHistory(db: PrismaClient, actor: ShiftActor, inp
     const sales = filter.type === "EXPENSE" ? [] : (await readEffectiveSales(tx, period.start, period.end)).transactions;
     const expenses = filter.type === "INCOME" ? [] : await tx.financeExpense.findMany({
       where: { deletedAt: null, occurredAt: { gte: period.start, lt: period.end } },
-      select: { id: true, occurredAt: true, category: true, description: true, amount: true },
+      select: { id: true, occurredAt: true, category: true, description: true, amount: true, revision: true },
     });
     return historyPage(sales, expenses, filter);
   }, { isolationLevel: "RepeatableRead" });
 }
 export async function saveExpense(db: PrismaClient, actor: ShiftActor, input: unknown) {
   if (!actor?.id || !["ADMIN", "FINANCE"].includes(actor.role)) throw new FinanceError("Akses ditolak.");
+  return db.$transaction(tx => saveExpenseInTransaction(tx, actor, input));
+}
+
+/** Shared expense mutation retains authorization, audit and retry receipts. */
+export async function saveExpenseInTransaction(tx: Prisma.TransactionClient, actor: ShiftActor, input: unknown) {
   const request = expenseInput(input);
   const fingerprint = createHash("sha256").update(JSON.stringify({ actorId: actor.id, ...request })).digest("hex");
-  return db.$transaction(async tx => {
     await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${actor.id}::uuid FOR SHARE`;
     const user = await tx.user.findFirst({ where: { id: actor.id, active: true, role: { in: ["ADMIN", "FINANCE"] } }, select: { id: true } });
     if (!user) throw new FinanceError("Akses ditolak.");
@@ -101,7 +105,6 @@ export async function saveExpense(db: PrismaClient, actor: ShiftActor, input: un
       details: JSON.parse(JSON.stringify({ before, after: saved })) } });
     await tx.financeExpenseRequest.create({ data: { key: request.key, fingerprint, expenseId: saved.id, revision: saved.revision } });
     return { id: saved.id, revision: saved.revision };
-  });
 }
 export async function listExpenses(db: PrismaClient, actor: ShiftActor, input: unknown, search = "", category = "", page = 1) {
   await authorizeFinance(db, actor);

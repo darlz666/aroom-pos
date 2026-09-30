@@ -1,7 +1,8 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { financeReportAction, financeHistoryAction } from "@/lib/finance/actions";
+import { financeReportAction, financeHistoryAction, financeHistoryDeleteAction } from "@/lib/finance/actions";
+import type { HistoryDeletion } from "@/lib/finance/history-deletion";
 import { defaultPeriod, type PeriodInput } from "@/lib/finance/domain";
 import { jakartaBusinessDate } from "@/lib/reports/domain";
 
@@ -91,7 +92,7 @@ export function ExpenseCategories({ rows, total }: { rows: Report["expenseCatego
   </section>;
 }
 
-export function FinanceHistory({ period, source }: { period: PeriodInput; source: Source }) {
+export function FinanceHistory({ period, source, canDelete = false, onDeleted }: { period: PeriodInput; source: Source; canDelete?: boolean; onDeleted: () => void }) {
   const [filter, setFilter] = useState({ type: "ALL", search: "", page: 1 });
   const [result, setResult] = useState<Awaited<ReturnType<typeof financeHistoryAction>> | null>(null);
   const [retry, setRetry] = useState(0);
@@ -109,6 +110,24 @@ export function FinanceHistory({ period, source }: { period: PeriodInput; source
     });
     return () => { active = false; };
   }, [period, filter, method, retry, requestKey]);
+  const [selection, setSelection] = useState<{ key: string; ids: string[] }>({ key: "", ids: [] });
+  const [intent, setIntent] = useState<HistoryDeletion | null>(null);
+  const [busy, setBusy] = useState(false), [uncertain, setUncertain] = useState(false), [error, setError] = useState("");
+  const submitting = useRef(false);
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => { if (intent) dialog.current?.showModal(); else dialog.current?.close(); }, [intent]);
+  const selected = selection.key === requestKey ? selection.ids : [];
+  async function remove() {
+    if (!intent || submitting.current) return;
+    if (!navigator.onLine) { setError("Tidak ada koneksi. Sambungkan kembali untuk mencoba permintaan yang sama."); return; }
+    submitting.current = true; setBusy(true); setError("");
+    try {
+      const response = await financeHistoryDeleteAction(intent);
+      if (!response.success) { setError(response.error); setUncertain(true); return; }
+      setIntent(null); setSelection({ key: "", ids: [] }); onDeleted();
+    } catch { setError("Hasil belum diketahui. Coba lagi dengan permintaan yang sama atau muat ulang data."); setUncertain(true); }
+    finally { submitting.current = false; setBusy(false); }
+  }
   const current = loadedKey === requestKey ? result : null;
   const data = current?.success ? current.data : null;
   return <section className={`${card} min-w-0 p-5`} aria-label="Riwayat Transaksi">
@@ -117,8 +136,22 @@ export function FinanceHistory({ period, source }: { period: PeriodInput; source
     <label className="mt-3 block text-xs text-[#62716a]">Cari nomor pesanan, deskripsi atau kategori pengeluaran<input type="search" maxLength={200} value={filter.search} onChange={e => setFilter({ ...filter, search: e.target.value, page: 1 })} className="mt-2 min-h-11 w-full rounded-lg border border-[#dfe5e1] bg-[#f9faf9] px-3 text-sm text-[#23382e]" placeholder="Cari transaksi…" /></label>
     {!current && <p role="status" className="py-8 text-center text-sm text-[#62716a]">Memuat riwayat…</p>}
     {current && !current.success && <div role="alert" className="py-4 text-sm"><p>{current.error}</p><button className={`${compactControl} mt-2 border border-[#dfe5e1]`} onClick={() => setRetry(n => n + 1)}>Coba lagi</button></div>}
+    {canDelete && <dialog ref={dialog} aria-labelledby="delete-history-title" onCancel={e => { e.preventDefault(); if (!busy && !uncertain) setIntent(null); }} className="m-auto max-w-lg rounded-2xl p-6 shadow-xl backdrop:bg-black/40">
+      {intent && <><h3 id="delete-history-title" className="text-xl font-semibold">Hapus {intent.rows.length} transaksi dari laporan?</h3>
+      <p className="my-4">Transaksi penjualan akan dikeluarkan dari laporan aktif tanpa menghapus bukti pembayaran asli. Pengeluaran akan dinonaktifkan tanpa menghapus histori audit.</p>
+      {error && <p role="alert" className="my-4 text-red-800">{error}</p>}
+      <div className="flex flex-wrap gap-3"><button autoFocus disabled={busy || uncertain} className={control} onClick={() => setIntent(null)}>Batal</button>
+      <button disabled={busy} className={control} onClick={() => void remove()}>{busy ? "Menghapus?" : uncertain ? "Coba lagi permintaan yang sama" : `Hapus ${intent.rows.length} Transaksi`}</button>
+      {uncertain && <button disabled={busy} className={control} onClick={() => { setIntent(null); setSelection({ key: "", ids: [] }); onDeleted(); }}>Muat ulang data</button>}</div></>}
+    </dialog>}
     {data && <>
+      {canDelete && <div className="mt-3 flex flex-wrap items-center gap-3">
+        <label className="flex min-h-14 items-center gap-3"><input type="checkbox" className="h-6 w-6" disabled={!!intent || !data.rows.length} checked={data.rows.length > 0 && selected.length === data.rows.length} onChange={e => setSelection({ key: requestKey, ids: e.target.checked ? data.rows.map(row => row.id) : [] })} />Pilih semua di halaman ini</label>
+        <span role="status">{selected.length} dipilih</span>
+        <button className={control} disabled={!!intent || !selected.length} onClick={() => { setError(""); setUncertain(false); setIntent({ key: crypto.randomUUID(), rows: data.rows.filter(row => selected.includes(row.id)).map(row => ({ type: row.type, id: row.referenceId, revision: row.revision, businessDate: jakartaBusinessDate(new Date(row.date)) })) }); }}>Hapus Terpilih</button>
+      </div>}
       {data.rows.length === 0 ? <p className="py-8 text-center text-sm text-[#62716a]">Tidak ada transaksi yang sesuai dengan periode dan filter ini.</p> : <ul className="mt-2 divide-y divide-[#edf0ed]">{data.rows.map(row => <li key={row.id} className="flex items-start gap-3 py-4">
+        {canDelete && <label className="flex min-h-14 min-w-14 items-center justify-center"><input aria-label={`Pilih ${row.title}: ${row.description}`} type="checkbox" className="h-6 w-6" disabled={!!intent} checked={selected.includes(row.id)} onChange={e => setSelection({ key: requestKey, ids: e.target.checked ? [...selected, row.id] : selected.filter(id => id !== row.id) })} /></label>}
         <span aria-hidden="true" className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${row.type === "INCOME" ? "bg-[#e7f3ed] text-[#24634d]" : "bg-[#fcf0e7] text-[#9a6031]"}`}>{row.type === "INCOME" ? "↙" : "↗"}</span>
         <div className="min-w-0 flex-1"><div className="flex flex-wrap justify-between gap-x-4 gap-y-1"><p className="break-words text-sm font-semibold">{row.title}</p><p className={`ml-auto break-all text-right text-sm font-semibold tabular-nums ${row.type === "INCOME" ? "text-[#24634d]" : "text-[#9a6031]"}`}><span className="sr-only">{row.type === "INCOME" ? "Pemasukan " : "Pengeluaran "}</span>{row.type === "INCOME" ? "+" : "−"}{money(row.amount)}</p></div><p className="mt-1 break-words text-sm text-[#62716a]">{row.description}</p><div className="mt-2 flex flex-wrap items-center gap-2"><span className="rounded-md bg-[#f2f4f3] px-2 py-1 text-xs text-[#62716a]">{row.badge}</span><time dateTime={row.date} className="text-xs text-[#62716a]">{new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", dateStyle: "medium" }).format(new Date(row.date))}</time></div></div>
       </li>)}</ul>}
@@ -127,7 +160,7 @@ export function FinanceHistory({ period, source }: { period: PeriodInput; source
   </section>;
 }
 
-export function FinanceReportPanel({ mode, initialValue }: { mode: "dashboard" | "monthly" | "yearly"; initialValue?: string }) {
+export function FinanceReportPanel({ mode, initialValue, canDelete = false }: { canDelete?: boolean; mode: "dashboard" | "monthly" | "yearly"; initialValue?: string }) {
   const [period, setPeriod] = useState<PeriodInput>(() => mode === "dashboard" ? defaultPeriod() : { type: mode === "monthly" ? "MONTH" : "YEAR", value: initialValue ?? jakartaBusinessDate().slice(0, mode === "monthly" ? 7 : 4) });
   const [result, setResult] = useState<Result | null>(null), [retry, setRetry] = useState(0);
   const [source, setSource] = useState<Source>("ALL");
@@ -180,7 +213,7 @@ export function FinanceReportPanel({ mode, initialValue }: { mode: "dashboard" |
             <div className="mt-2 flex items-center gap-3 border-t border-[#edf0ed] pt-3"><p className="text-xs text-[#62716a]">Jumlah Transaksi · Semua metode</p><p className="text-base font-semibold tabular-nums">{s.paidOrderCount}<span className="ml-2 text-xs font-normal text-[#62716a]">transaksi</span></p></div>
           </section>
         </div>
-        <FinanceHistory key={`${period.type}-${period.value}`} period={period} source={source} />
+        <FinanceHistory key={`${period.type}-${period.value}-${source}-${retry}`} period={period} source={source} canDelete={canDelete} onDeleted={() => { generation.current++; setResult(null); setRetry(n => n + 1); }} />
         <aside className="text-xs leading-6 text-[#62716a]">
           <p><span className="font-medium">Saat ini:</span> nilai stok merupakan snapshot terkini, bukan nilai historis periode terpilih.</p>
           <p>Pengeluaran operasional tidak termasuk biaya yang sudah dicatat dalam HPP, potongan channel atau iklan. Pendapatan Bersih = sales Net Revenue − pengeluaran operasional.</p>

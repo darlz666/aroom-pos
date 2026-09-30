@@ -12,7 +12,7 @@ test("category presentation uses integer amounts and rounded percentages", () =>
 
 test("history is bounded, newest first, searches supported fields and keeps expenses independent of methods", () => {
   const sales = Array.from({ length: 24 }, (_, i) => ({ orderId: String(i), orderNumber: `AROOM-${i}`, paidAt: new Date(Date.UTC(2026, 8, i + 1)).toISOString(), paymentMethod: i % 2 ? "CASH" : "MIDTRANS_QRIS", quantity: 4, totalRevenue: 50000 } as ReportTransaction));
-  const expenses = [{ id: "expense", occurredAt: new Date("2026-09-29T00:00:00Z"), category: "Internet", description: "September bill", amount: 100 }];
+  const expenses = [{ revision: 1, id: "expense", occurredAt: new Date("2026-09-29T00:00:00Z"), category: "Internet", description: "September bill", amount: 100 }];
   const filter = historyFilter({ type: "ALL", method: "ALL", search: "", page: 1 });
   const all = historyPage(sales, expenses, filter);
   assert.equal(all.total, 25); assert.equal(all.rows.length, 10); assert.equal(all.pages, 3); assert.equal(all.rows[0].type, "EXPENSE");

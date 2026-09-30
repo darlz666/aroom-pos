@@ -5,7 +5,7 @@ import type { ShiftActor } from "../shifts/domain";
 import { jakartaBusinessDate } from "./domain";
 import { AdjustmentError, adjustmentInput, effectivePaidAt, id, voidInput } from "./adjustment-domain";
 
-async function authorized<T>(db: PrismaClient, actor: ShiftActor, work: (tx: Prisma.TransactionClient) => Promise<T>) {
+export async function authorized<T>(db: PrismaClient, actor: ShiftActor, work: (tx: Prisma.TransactionClient) => Promise<T>) {
   if (!actor || actor.role !== "ADMIN") throw new AdjustmentError("FORBIDDEN");
   const actorId = id(actor.id);
   return db.$transaction(async tx => {
@@ -52,7 +52,11 @@ export async function adjustTransaction(db: PrismaClient, actor: ShiftActor, inp
 
 /** One atomic set; lock in stable order. Existing voids are replay-safe no-ops. */
 export async function voidTransactions(db: PrismaClient, actor: ShiftActor, input: unknown) {
-  return authorized(db, actor, async tx => {
+  return authorized(db, actor, tx => voidTransactionsInTransaction(tx, actor, input));
+}
+
+/** Caller holds the authenticated ADMIN lock through commit. */
+export async function voidTransactionsInTransaction(tx: Prisma.TransactionClient, actor: ShiftActor, input: unknown) {
     const request = voidInput(input);
     let created = 0;
     for (const row of request.transactions) {
@@ -69,5 +73,4 @@ export async function voidTransactions(db: PrismaClient, actor: ShiftActor, inpu
       created++;
     }
     return { count: request.transactions.length, created };
-  });
 }

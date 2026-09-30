@@ -6,6 +6,8 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient, type Prisma } from "../src/generated/prisma/client";
 import { getFinanceReport, listExpenses, saveExpense } from "../src/lib/finance/service";
 import { adjustTransaction, voidTransactions } from "../src/lib/reports/adjustment-service";
+import { deleteFinanceHistory } from "../src/lib/finance/history-deletion";
+
 
 test("Finance expense authorization, concurrency, rollback and period reporting in PostgreSQL", async t => {
   const url = new URL(process.env.DATABASE_URL!);
@@ -94,5 +96,193 @@ test("Finance expense authorization, concurrency, rollback and period reporting 
       assert.equal(lifetime.summary.operatingExpenses, past.amount); // future expenses excluded
       assert.equal(lifetime.period.start, "2019-12-31T17:00:00.000Z");
     });
+      await t.test("ADMIN mixed finance history delete is atomic and preserves sales evidence", async () => {
+  const category = await db.category.create({
+    data: { name: `Mixed Delete ${randomUUID()}` },
+  });
+
+  const product = await db.product.create({
+    data: {
+      categoryId: category.id,
+      name: "Mixed Delete Coffee",
+      price: 50000,
+    },
+  });
+
+  const shift = await db.shift.create({
+    data: {
+      cashierId: cashier.id,
+      status: "CLOSED",
+      openingCash: 0,
+      expectedCash: 50000,
+      countedCash: 50000,
+      variance: 0,
+      openedAt: new Date("2043-01-01T00:00:00.000Z"),
+      closedAt: new Date("2043-01-01T03:00:00.000Z"),
+    },
+  });
+
+  const order = await db.order.create({
+    data: {
+      shiftId: shift.id,
+      cashierId: cashier.id,
+      orderNumber: randomUUID(),
+      createIdempotencyKey: randomUUID(),
+      createRequestFingerprint: "mixed-delete-evidence",
+      orderType: "DINE_IN",
+      status: "PAID",
+      total: 50000,
+      paidAt: new Date("2043-01-01T01:00:00.000Z"),
+      items: {
+        create: {
+          productId: product.id,
+          productNameSnapshot: "Mixed Delete Coffee",
+          unitPriceSnapshot: 50000,
+          quantity: 1,
+          lineTotal: 50000,
+        },
+      },
+      payments: {
+        create: {
+          method: "CASH",
+          status: "SUCCEEDED",
+          amount: 50000,
+          cashReceived: 50000,
+          changeAmount: 0,
+          succeededAt: new Date("2043-01-01T01:00:00.000Z"),
+          attemptIdentifier: randomUUID(),
+        },
+      },
+    },
+    include: {
+      items: true,
+      payments: true,
+    },
+  });
+
+  const expenseInput = {
+    operation: "CREATE",
+    id: randomUUID(),
+    key: randomUUID(),
+    revision: 0,
+    date: "2043-01-01",
+    amount: 12000,
+    category: "Internet",
+    description: "Mixed delete expense",
+  };
+
+  await saveExpense(db, admin, expenseInput);
+
+  const originalOrder = await db.order.findUniqueOrThrow({
+    where: { id: order.id },
+    include: {
+      items: true,
+      payments: true,
+    },
+  });
+
+  const baseInput = {
+    key: randomUUID(),
+    rows: [
+      {
+        type: "INCOME" as const,
+        id: order.id,
+        revision: 0,
+        businessDate: "2043-01-01",
+      },
+      {
+        type: "EXPENSE" as const,
+        id: expenseInput.id,
+        revision: 1,
+        businessDate: "2043-01-01",
+      },
+    ],
+  };
+
+  await assert.rejects(
+    deleteFinanceHistory(db, finance, baseInput),
+  );
+
+  assert.equal(
+    await db.transactionVoid.count({
+      where: { orderId: order.id },
+    }),
+    0,
+  );
+
+  assert.equal(
+    (await db.financeExpense.findUniqueOrThrow({
+      where: { id: expenseInput.id },
+    })).deletedAt,
+    null,
+  );
+
+  await assert.rejects(
+    deleteFinanceHistory(db, admin, {
+      ...baseInput,
+      key: randomUUID(),
+      rows: [
+        baseInput.rows[0],
+        {
+          ...baseInput.rows[1],
+          revision: 999,
+        },
+      ],
+    }),
+  );
+
+  assert.equal(
+    await db.transactionVoid.count({
+      where: { orderId: order.id },
+    }),
+    0,
+  );
+
+  assert.equal(
+    (await db.financeExpense.findUniqueOrThrow({
+      where: { id: expenseInput.id },
+    })).deletedAt,
+    null,
+  );
+
+  const deleted = await deleteFinanceHistory(db, admin, baseInput);
+
+  assert.equal(deleted.count, 2);
+
+  assert.equal(
+    await db.transactionVoid.count({
+      where: { orderId: order.id },
+    }),
+    1,
+  );
+
+  assert.notEqual(
+    (await db.financeExpense.findUniqueOrThrow({
+      where: { id: expenseInput.id },
+    })).deletedAt,
+    null,
+  );
+
+  assert.deepEqual(
+    await db.order.findUniqueOrThrow({
+      where: { id: order.id },
+      include: {
+        items: true,
+        payments: true,
+      },
+    }),
+    originalOrder,
+  );
+
+  const report = await getFinanceReport(
+    db,
+    admin,
+    { type: "DAY", value: "2043-01-01" },
+  );
+
+  assert.equal(report.summary.paidSales, 0);
+  assert.equal(report.summary.operatingExpenses, 0);
+});
+
   } finally { await db.$disconnect(); }
 });

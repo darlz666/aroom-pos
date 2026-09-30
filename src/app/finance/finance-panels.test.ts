@@ -129,15 +129,83 @@ test("all finance actions freshly guard before service work and derive the actor
   const actor = { id: "server-identity", role: "FINANCE" };
   const denied = new Error("redirect");
   const actions = load("../../lib/finance/actions.ts", {
-    "next/navigation": { unstable_rethrow(e: unknown) { if (e === denied) throw e; } },
-    "../auth/authorization": { requireFinanceManager: async () => { if (!["FINANCE", "ADMIN"].includes(role!)) throw denied; return actor; } },
-    "../db": { prisma: {} }, "./domain": domain,
-    "./service": Object.fromEntries(["getFinanceReport", "getFinanceHistory", "listExpenses", "saveExpense"].map(name => [name, async (_db: unknown, authenticated: unknown) => { assert.equal(authenticated, actor); calls++; return {}; }])),
-  });
-  for (role of [null, "INACTIVE", "CASHIER", "STOCK_MANAGEMENT"]) for (const action of Object.values(actions)) await assert.rejects(action({ role: "ADMIN", actorId: "browser" }), /redirect/);
-  assert.equal(calls, 0);
-  for (role of ["FINANCE", "ADMIN"]) for (const action of Object.values(actions)) assert.equal((await action({})).success, true);
-  assert.equal(calls, 8);
+  "next/navigation": {
+    unstable_rethrow(e: unknown) {
+      if (e === denied) throw e;
+    },
+  },
+  "../auth/authorization": {
+    requireFinanceManager: async () => {
+      if (!["FINANCE", "ADMIN"].includes(role!)) throw denied;
+      return actor;
+    },
+    requireRole: async (required: string) => {
+      assert.equal(required, "ADMIN");
+      if (role !== "ADMIN") throw denied;
+      return { ...actor, role: "ADMIN" };
+    },
+  },
+  "../db": { prisma: {} },
+  "./domain": domain,
+  "./history-deletion": {
+    deleteFinanceHistory: async (_db: unknown, authenticated: unknown) => {
+      assert.equal((authenticated as { role: string }).role, "ADMIN");
+      calls++;
+      return {};
+    },
+  },
+  "./service": Object.fromEntries(
+    ["getFinanceReport", "getFinanceHistory", "listExpenses", "saveExpense"].map(name => [
+      name,
+      async (_db: unknown, authenticated: unknown) => {
+        assert.equal(authenticated, actor);
+        calls++;
+        return {};
+      },
+    ]),
+  ),
+});
+  const managerActions = [
+  actions.financeReportAction,
+  actions.financeHistoryAction,
+  actions.expenseListAction,
+  actions.expenseSaveAction,
+];
+
+for (role of [null, "INACTIVE", "CASHIER", "STOCK_MANAGEMENT"]) {
+  for (const action of [...managerActions, actions.financeHistoryDeleteAction]) {
+    await assert.rejects(
+      action({ role: "ADMIN", actorId: "browser" }),
+      /redirect/,
+    );
+  }
+}
+
+assert.equal(calls, 0);
+
+role = "FINANCE";
+
+for (const action of managerActions) {
+  assert.equal((await action({})).success, true);
+}
+
+await assert.rejects(
+  actions.financeHistoryDeleteAction({}),
+  /redirect/,
+);
+
+role = "ADMIN";
+
+for (const action of managerActions) {
+  assert.equal((await action({})).success, true);
+}
+
+assert.equal(
+  (await actions.financeHistoryDeleteAction({})).success,
+  true,
+);
+
+assert.equal(calls, 9);
 });
 
 test("finance page/action guard reloads current user and rejects missing, revoked and restricted users", async () => {
@@ -187,6 +255,200 @@ test("finance page/action guard reloads current user and rejects missing, revoke
   elements(h.render()).find(e => e.type === "input").props.onChange({ target: { value: "AROOM" } }); h.render();
   assert.equal(requests[5].filter.search, "AROOM"); assert.equal(requests[5].filter.page, 1);
  });
+
+ test("ADMIN history selection, confirmation and bulk delete while FINANCE stays read-only", async () => {
+  const deleteCalls: any[] = [];
+  let refreshed = 0;
+
+  const data = {
+    rows: [
+      {
+        id: "income-one",
+        referenceId: "order-1",
+        revision: 2,
+        type: "INCOME",
+        date: "2026-09-29T01:00:00.000Z",
+        title: "Penjualan - Aroomsbrew",
+        description: "Pesanan: AROOM-001",
+        badge: "Tunai",
+        amount: 25000,
+      },
+      {
+        id: "expense-one",
+        referenceId: "expense-1",
+        revision: 3,
+        type: "EXPENSE",
+        date: "2026-09-29T02:00:00.000Z",
+        title: "Internet",
+        description: "Internet September",
+        badge: "Operasional",
+        amount: 300000,
+      },
+    ],
+    page: 1,
+    pageSize: 10,
+    total: 2,
+    pages: 1,
+  };
+
+  const actions = {
+    financeHistoryAction: async () => ({
+      success: true,
+      data,
+    }),
+    financeHistoryDeleteAction: async (input: any) => {
+      deleteCalls.push(input);
+      return {
+        success: true,
+        data: { count: input.rows.length },
+      };
+    },
+  };
+
+  const admin = harness(
+    "./report-panel.tsx",
+    "FinanceHistory",
+    {
+      period: { type: "MONTH", value: "2026-09" },
+      source: "ALL",
+      canDelete: true,
+      onDeleted: () => {
+        refreshed++;
+      },
+    },
+    actions,
+    {
+      navigator: { onLine: true },
+      crypto: { randomUUID },
+    },
+  );
+
+  admin.render();
+  await flush();
+
+  let tree = admin.render();
+
+  assert.match(
+    text(tree),
+    /Pilih semua di halaman ini.*0\s+dipilih.*Hapus Terpilih/,
+  );
+
+  assert.equal(
+    elements(tree).filter(
+      e => e.type === "input" && e.props.type === "checkbox",
+    ).length,
+    3,
+  );
+
+  const selectAllLabel = elements(tree).find(
+    e => e.type === "label" && text(e).includes("Pilih semua di halaman ini"),
+  );
+
+  const selectAll = elements(selectAllLabel).find(
+    e => e.type === "input" && e.props.type === "checkbox",
+  );
+
+  selectAll.props.onChange({ target: { checked: true } });
+
+  tree = admin.render();
+
+  assert.match(text(tree), /2\s+dipilih/);
+
+  elements(tree)
+    .find(e => e.type === "button" && text(e) === "Hapus Terpilih")
+    .props.onClick();
+
+  tree = admin.render();
+
+  assert.match(
+  text(tree),
+  /Hapus\s+2\s+transaksi dari laporan/,
+  );
+
+  assert.equal(deleteCalls.length, 0);
+
+  elements(tree)
+    .find(e => e.type === "button" && text(e) === "Batal")
+    .props.onClick();
+
+  tree = admin.render();
+
+  assert.doesNotMatch(
+  text(tree),
+  /Hapus\s+2\s+transaksi dari laporan/,
+  );
+  assert.equal(deleteCalls.length, 0);
+
+  elements(tree)
+    .find(e => e.type === "button" && text(e) === "Hapus Terpilih")
+    .props.onClick();
+
+  tree = admin.render();
+
+  elements(tree)
+    .find(e => e.type === "button" && text(e) === "Hapus 2 Transaksi")
+    .props.onClick();
+
+  await flush();
+
+  assert.equal(deleteCalls.length, 1);
+  assert.equal(deleteCalls[0].rows.length, 2);
+
+  assert.deepEqual(
+    deleteCalls[0].rows.map((row: any) => ({
+      type: row.type,
+      id: row.id,
+      revision: row.revision,
+    })),
+    [
+      {
+        type: "INCOME",
+        id: "order-1",
+        revision: 2,
+      },
+      {
+        type: "EXPENSE",
+        id: "expense-1",
+        revision: 3,
+      },
+    ],
+  );
+
+  assert.equal(refreshed, 1);
+
+  const finance = harness(
+    "./report-panel.tsx",
+    "FinanceHistory",
+    {
+      period: { type: "MONTH", value: "2026-09" },
+      source: "ALL",
+      canDelete: false,
+      onDeleted() {},
+    },
+    actions,
+    {
+      navigator: { onLine: true },
+      crypto: { randomUUID },
+    },
+  );
+
+  finance.render();
+  await flush();
+
+  const financeTree = finance.render();
+
+  assert.doesNotMatch(
+    text(financeTree),
+    /Pilih semua di halaman ini|Hapus Terpilih/,
+  );
+
+  assert.equal(
+    elements(financeTree).filter(
+      e => e.type === "input" && e.props.type === "checkbox",
+    ).length,
+    0,
+  );
+});
 
  test("cashflow uses server net income with negative coordinates and gaps for unknown HPP", () => {
   const h = harness("./report-panel.tsx", "FinanceReportPanel", { mode: "dashboard" }, {});
