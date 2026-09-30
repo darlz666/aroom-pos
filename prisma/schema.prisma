@@ -79,6 +79,34 @@ model User {
   stockIns        StockIn[]
   transactionAdjustments TransactionAdjustment[]
   transactionVoids TransactionVoid[]
+  financeExpenses FinanceExpense[]
+}
+
+model FinanceExpense {
+  id String @id @db.Uuid
+  occurredAt DateTime @db.Timestamptz(3)
+  amount Int
+  category String
+  description String
+  note String?
+  createdBy String @db.Uuid
+  creator User @relation(fields: [createdBy], references: [id], onDelete: Restrict)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+  deletedAt DateTime? @db.Timestamptz(3)
+  revision Int @default(1)
+  requests FinanceExpenseRequest[]
+  @@index([occurredAt, deletedAt])
+}
+
+// Immutable request receipts allow safe retries after later expense edits.
+model FinanceExpenseRequest {
+  key String @id @db.Uuid
+  fingerprint String
+  expenseId String @db.Uuid
+  expense FinanceExpense @relation(fields: [expenseId], references: [id], onDelete: Restrict)
+  revision Int
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
 }
 
 model Category {

@@ -24,6 +24,12 @@ export async function requireOperator(): Promise<AuthenticatedUser> {
   return user;
 }
 
+export async function requireFinanceManager(): Promise<AuthenticatedUser> {
+  const user = await requireUser();
+  if (user.role !== "ADMIN" && user.role !== "FINANCE") redirect("/");
+  return user;
+}
+
 // Read-only daily reporting; does not grant POS or order mutation access.
 export async function requireReportReader(): Promise<AuthenticatedUser> {
   const user = await requireUser();

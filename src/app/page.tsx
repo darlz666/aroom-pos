@@ -20,10 +20,10 @@ export default async function Home() {
 
   if (user.role === "STOCK_MANAGEMENT") redirect("/inventory");
   if (user.role === "FINANCE") {
-    return <main lang="id" className="min-w-0 flex-1 bg-[#f6f4ef] p-6 text-[#292e28] sm:p-10">
-      <div className="mx-auto max-w-6xl space-y-10">
-        <header className="flex flex-wrap items-center justify-between gap-5 border-b border-[#dedfd5] pb-6">
-          <div><p className="text-2xl font-semibold">AROOM Coffee Bar</p><h1 className="mt-1 text-lg text-[#62685c]">Finance</h1></div>
+    return <main lang="id" className="min-w-0 flex-1 bg-[#f5f7f5] px-4 py-6 text-[#23382e] sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl space-y-7">
+        <header className="flex flex-wrap items-center justify-between gap-4 border-b border-[#e2e7e3] pb-5">
+          <div><p className="text-lg font-semibold tracking-tight">AROOM Coffee Bar</p><p className="mt-1 text-xs font-medium tracking-wide text-[#62716a]">Finance</p></div>
           <FinanceNavigation current="dashboard" />
         </header>
         <Suspense fallback={<p role="status">Memuat laporan hari ini…</p>}><FinanceDashboard /></Suspense>

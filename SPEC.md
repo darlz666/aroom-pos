@@ -964,3 +964,98 @@ and integer-only ingredient unit-cost design in sections 20-22 for 7E. Existing
 - Admin selection supports single, multiple and all currently loaded transactions for the selected date. Selection resets on date changes and report reload. Single and bulk Hapus require confirmation, then atomically append voids and audit records, excluding those orders from active totals and details. Original evidence remains queryable. There is no undo/unvoid workflow in this scope.
 - Every mutation freshly authorizes ADMIN, locks the user through commit, validates strict input, and locks affected orders in stable ID order. Expected adjustment revisions reject stale edits/voids. Adjustment retry keys bind actor and normalized intent; matching retries return their saved result. Existing voids are replay-safe no-ops only after revision and business-date validation. Bulk void accepts at most 1000 raw entries, deduplicates identical order/revision targets, rejects conflicting revisions for one order and applies entirely or rolls back.
 - UI prevents duplicate and offline submissions. An uncertain result locks the submitted intent for explicit same-request retry or authoritative report reload. No offline queue. Refresh totals/details after confirmed success; failed refresh never displays stale totals as current.
+
+## 26. Finance Period Reporting and Operating Expenses
+
+This milestone supersedes earlier Finance placeholder/read-only requirements only
+for the following capabilities. Original Order, OrderItem, Payment, receipts,
+stock movements and ADMIN adjustment/void behavior remain unchanged.
+
+- Active FINANCE and ADMIN may read the financial dashboard, monthly/yearly
+  reports and current inventory valuation, and manage FinanceExpense records.
+  CASHIER retains existing daily-report detail/reprint access but cannot access
+  the new finance reports or expense ledger. STOCK_MANAGEMENT cannot access
+  financial reports or expenses. Anonymous/inactive users are rejected.
+- Finance sales access remains read-only: no adjustment, void, delete, payment
+  changes, revision changes, selection or bulk sales controls. Finance navigation
+  is Dashboard, Laporan Harian, Laporan Bulanan, Laporan Tahunan, Pengeluaran,
+  Keluar. It exposes no POS, stock, suppliers, recipes or access management.
+  Existing independent recipe read permission is unchanged.
+- All pages/actions freshly authenticate on the server. Expense mutations also
+  lock and reload the authenticated user through transaction commit; browser
+  actor/role values are never authoritative. ADMIN sales mutation guards and
+  concurrency semantics in section 25 remain unchanged.
+
+### Periods and financial reporting
+
+- Dashboard defaults to Bulanan / current Jakarta month. Harian selects a date,
+  Bulanan selects month/year, Tahunan selects year, Lifetime has no date selector.
+  Server validation rejects malformed periods. DAY, MONTH and YEAR use half-open
+  Asia/Jakarta calendar ranges; LIFETIME includes relevant persisted effective
+  sales/expense dates before the request timestamp, with the earliest such date
+  reported as its start (no start for an empty lifetime).
+- The shared server sales projection excludes TransactionVoid and uses only the
+  latest TransactionAdjustment revision, including its effective Jakarta date.
+  No browser financial aggregation. Payment-method totals and Total Penjualan
+  remain gross effective selling subtotals; channelFee never reduces them.
+- HPP and Gross Profit retain section 25 semantics. Sales Net Revenue equals
+  Gross Profit - channelFee - adsCost (adsCost remains the existing zero
+  placeholder). Dashboard/report Pendapatan Bersih equals sales Net Revenue
+  minus non-deleted manual operating expenses in the same business period.
+  If any included sale has unknown HPP, aggregate HPP, Gross Profit, sales Net
+  Revenue and Pendapatan Bersih are unavailable, displayed as `-`, never zero.
+  Known negative net income is allowed. Empty successful sales/expense totals
+  are zero; an expense-only period can have negative net income.
+- Manual expenses cover operating costs NOT ALREADY represented by HPP,
+  channelFee or adsCost, such as wages, rent, electricity/water, internet,
+  maintenance, cleaning and operational transport. Marketing is only for costs
+  not already recorded in adsCost. Ingredient purchases are NEVER automatically
+  copied into expenses: doing so could double-count costs already in HPP.
+- Summary: Total Penjualan, Jumlah Transaksi, Tunai, BCA EDC, QRIS, HPP,
+  Gross Profit, Potongan/Beban Penjualan (channel fees + ads costs), Pengeluaran
+  Operasional and Pendapatan Bersih. Dashboard shows sales, net income, manual
+  expense total, current inventory value, count and payment breakdown.
+- Monthly reports include every Jakarta calendar day, including empty days;
+  yearly reports include all twelve months. Breakdown columns: date/month,
+  count, sales, payment-method totals, HPP, Gross Profit, operating expenses and
+  net income. Month selection opens that monthly report; day selection opens
+  the existing daily report for that date. Daily shift settlement remains based
+  on original payment evidence, unaffected by expenses or adjustments.
+- Views show explicit loading, empty, success and retryable failure states.
+  Changing periods clears prior values immediately; superseded requests cannot
+  overwrite newer results. All sums use exact integer arithmetic with safe
+  integer IDR output bounds; overflow returns a controlled error.
+
+### Expense ledger
+
+- FinanceExpense stores UUID, occurredAt (Jakarta business-day start), positive
+  integer IDR amount (maximum 2147483647), category, description, optional note,
+  createdBy User reference, createdAt, updatedAt, revision and nullable deletedAt.
+  Categories: Gaji, Sewa, Listrik & Air, Internet, Maintenance, Kebersihan,
+  Marketing, Transport Operasional, Lainnya.
+- ADMIN/FINANCE may create, edit and cancel via soft deletion. SQL forbids hard
+  deletion, changes to original identity/creator/creation timestamp, edits after
+  cancellation, and invalid revision increments. Active totals exclude deleted
+  expenses. Dates are user-selected business dates, not creation dates.
+- Each mutation writes before/after audit information and an immutable request
+  receipt atomically. Actor-bound normalized idempotency keys make identical
+  concurrent/repeated requests safe, including retry after later edits. Reusing
+  a key for different intent is rejected. Row locks and expected revisions
+  reject stale edits/deletes; failures roll back expense/audit/request together.
+- History searches description/category, filters period/category and paginates
+  in 50-row pages. Forms reject zero/negative/fractional/formatted money,
+  duplicate in-flight submissions and offline writes. Uncertain requests retain
+  their exact intent in tab session storage for explicit replay; no offline queue.
+
+### Current inventory value
+
+- Nilai Stok Bahan is explicitly labelled Saat ini, independent of report period.
+  Read current balances and authoritative weightedAverageUnitCostMicros from one
+  consistent database snapshot, including inactive ingredients still held.
+  Do not use latest purchase prices, legacyUnitCost, selling prices or recipe HPP.
+- For each ingredient: exact quantity-thousandths × saved WAC micro-rupiah /
+  1000000000; round half-up per ingredient to whole rupiah and sum with BigInt.
+  Zero stock contributes zero regardless of cost availability. Any positive
+  stock with null WAC makes the overall valuation unavailable/incomplete and
+  displays the missing-cost ingredient count; never substitute a zero price.
+  No historical inventory valuation, new costing fields or stock mutations.

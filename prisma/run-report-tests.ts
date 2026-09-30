@@ -32,7 +32,7 @@ try {
     } });
   } finally { await db.$disconnect(); }
   run(["node_modules/tsx/dist/cli.mjs", "--conditions=react-server", "--test", "--test-concurrency=1",
-    "prisma/transaction-adjustments.test.ts", "src/lib/reports/adjustment-domain.test.ts",
+    "prisma/transaction-adjustments.test.ts", "prisma/finance.test.ts", "src/lib/finance/domain.test.ts", "src/lib/reports/adjustment-domain.test.ts",
     "src/lib/reports/service.test.ts", "src/app/admin/reports/daily-report.test.ts",
     "src/lib/orders/receipt.test.ts", "src/lib/orders/service.test.ts",
     "src/lib/shifts/settlement.test.ts"]);
