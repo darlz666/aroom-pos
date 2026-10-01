@@ -17,6 +17,7 @@ import {
   updateSupplier
 } from "./service";
 import { listStockMovements } from "./movement-service";
+import { getStockDashboard } from "./dashboard-service";
 
 export async function listStockMovementsAction() {
   try {
@@ -29,6 +30,23 @@ export async function listStockMovementsAction() {
     } as const;
   }
   catch (error) {
+    return failure(error);
+  }
+}
+
+export async function getStockDashboardAction(
+  input: unknown = {}
+) {
+  try {
+    return {
+      success: true,
+      dashboard: await getStockDashboard(
+        prisma,
+        await requireInventoryManager(),
+        input
+      ),
+    } as const;
+  } catch (error) {
     return failure(error);
   }
 }

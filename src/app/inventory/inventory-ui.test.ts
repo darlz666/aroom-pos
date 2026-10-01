@@ -43,6 +43,53 @@ const saved = { id: randomUUID(), referenceNumber: "SI-receipt", supplierName: "
 const row = { id: saved.id, referenceNumber: saved.referenceNumber, supplierName: "Greenfields", receivedAt: saved.receivedAt, createdAt: saved.createdAt, actorName: "Stock staff", itemCount: 1, total: 240000 };
 const history = { success: true, entries: [row], nextCursor: null };
 const unavailable = { success: false, code: "UNAVAILABLE", error: "Unavailable" };
+const movementResult = {
+  success: true,
+  movements: [],
+};
+
+const dashboardResult = {
+  success: true,
+  dashboard: {
+    period: {
+      type: "30D",
+      start: "2026-08-20T17:00:00.000Z",
+      end: "2026-09-19T17:00:00.000Z",
+    },
+    snapshot: {
+      inventoryValue: 240000,
+      inventoryValueComplete: true,
+      missingCostCount: 0,
+      activeIngredientCount: 3,
+      emptyIngredientCount: 1,
+      lowIngredientCount: 1,
+      negativeStockCount: 0,
+      asOf: "2026-09-18T03:00:00.000Z",
+    },
+    movement: {
+      stockInMovementCount: 1,
+      stockOutMovementCount: 0,
+      series: [
+        {
+          date: "2026-09-18",
+          stockIn: 1,
+          stockOut: 0,
+        },
+      ],
+    },
+    attentionItems: [],
+    recentMovements: [],
+  },
+} as const;
+
+const workspaceProps = () => ({
+  actorId: "stock-user",
+  initialIngredients: ingredientResult,
+  initialSuppliers: supplierResult,
+  initialHistory: history,
+  initialMovements: movementResult,
+  initialDashboard: dashboardResult,
+});
 const settle = () => new Promise(resolve => setImmediate(resolve));
 type Call = { name: string; input: unknown; resolve: (value: unknown) => void; reject: (error: Error) => void };
 
@@ -60,28 +107,138 @@ function harness(file: string, component: string, props: Record<string, unknown>
       useRef(value: unknown) { const i = cursor++; if (!(i in slots)) slots[i] = { current: value }; return slots[i]; },
       useEffect(effect: () => unknown) { const i = cursor++; if (!(i in slots)) { slots[i] = true; effects.push(effect); } },
     },
-    "@/lib/inventory/actions": Object.fromEntries(["createStockInAction", "createSupplierAction", "updateSupplierAction", "listIngredientsAction", "listSuppliersAction", "listStockInsAction", "getStockInAction"].map(name => [name, action(name)])),
+    "@/lib/inventory/actions": Object.fromEntries(
+  [
+    "createStockInAction",
+    "createSupplierAction",
+    "updateSupplierAction",
+    "listIngredientsAction",
+    "listSuppliersAction",
+    "listStockInsAction",
+    "getStockInAction",
+    "listStockMovementsAction",
+    "getStockDashboardAction",
+  ].map(name => [name, action(name)])
+),
     "@/lib/inventory/receiving-form": receiving, "./presentation": presentation,
-    "./suppliers-panel": { SuppliersPanel: "SuppliersPanel" }, "./stock-in-form": { StockInForm: "StockInForm" }, "./stock-in-history": { StockInHistory: "StockInHistory" },
-  }, { navigator, crypto: { randomUUID }, sessionStorage: { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), removeItem: (key: string) => storage.delete(key) },
-    window: { addEventListener: (name: string, fn: (event: unknown) => void) => listeners.set(name, fn), removeEventListener: (name: string) => listeners.delete(name) } });
+    "./suppliers-panel": {
+    SuppliersPanel: "SuppliersPanel",
+    },
+    "./ingredients-panel": {
+      IngredientsPanel: "IngredientsPanel",
+    },
+    "./stock-in-form": {
+      StockInForm: "StockInForm",
+    },
+    "./stock-in-history": {
+      StockInHistory: "StockInHistory",
+    },
+    "./stock-movement-history": {
+      StockMovementHistory: "StockMovementHistory",
+    },
+    "./stock-dashboard": {
+      StockDashboard: "StockDashboard",
+    },
+  }, {
+  navigator,
+  crypto: { randomUUID },
+
+  sessionStorage: {
+    getItem: (key: string) =>
+      storage.get(key) ?? null,
+
+    setItem: (
+      key: string,
+      value: string
+    ) => storage.set(key, value),
+
+    removeItem: (key: string) =>
+      storage.delete(key),
+  },
+
+  window: {
+    addEventListener: (
+      name: string,
+      fn: (event: unknown) => void
+    ) => listeners.set(name, fn),
+
+    removeEventListener: (
+      name: string
+    ) => listeners.delete(name),
+  },
+
+  setTimeout: (fn: () => void) => {
+    fn();
+    return 0;
+  },
+
+  clearTimeout: () => {},
+
+  requestAnimationFrame: (
+    fn: (time: number) => void
+  ) => {
+    fn(0);
+    return 0;
+  },
+});
   const render = () => { cursor = 0; return loaded[component](props as never); };
   render(); for (const effect of effects.splice(0)) { const cleanup = effect(); if (typeof cleanup === "function") cleanups.push(cleanup as () => void); }
   const button = (label: string) => { const found = elements(render()).find(e => e.type === "button" && text(e) === label); assert.ok(found, label); return found; };
   const change = (label: string, value: string) => {
-    const found = elements(render()).find(e => e.type === "label" && text(e).startsWith(label)); assert.ok(found, label);
-    const input = elements(found).find(e => ["input", "select", "textarea"].includes(String(e.type)))!;
-    (input.props.onChange as (event: unknown) => void)({ target: { value } });
-  };
+  const tree = elements(render());
+
+  const foundLabel = tree.find(
+    e =>
+      e.type === "label" &&
+      text(e).startsWith(label)
+  );
+
+  const input = foundLabel
+    ? elements(foundLabel).find(e =>
+        ["input", "select", "textarea"].includes(
+          String(e.type)
+        )
+      )
+    : tree.find(
+        e =>
+          ["input", "select", "textarea"].includes(
+            String(e.type)
+          ) &&
+          typeof e.props.placeholder === "string" &&
+          String(e.props.placeholder).startsWith(label)
+      );
+
+  assert.ok(input, label);
+  assert.equal(
+    typeof input.props.onChange,
+    "function",
+    `${label} is not editable`
+  );
+
+  (
+    input.props.onChange as
+      (event: unknown) => void
+  )({
+    target: { value },
+  });
+};
   const submitHandler = () => elements(render()).find(e => e.type === "form")!.props.onSubmit as (event: unknown) => Promise<void>;
   return { render, props, change, calls, navigator, listeners, storage, button, submitHandler,
     click: (label: string) => (button(label).props.onClick as () => Promise<void>)(),
     submit: () => submitHandler()({ preventDefault() {} }), unmount: () => cleanups.forEach(fn => fn()) };
 }
 const receivingProps = () => ({ actorId: "stock-user", ingredients: ingredientResult, suppliers: supplierResult, loading: false, reload: async () => {}, onSaved: () => {}, onHistory: () => {} });
-function fillReceipt(h: ReturnType<typeof harness>) {
-  h.change("Supplier", supplier.id); h.change("Diterima", "2026-09-18T08:00"); h.change("Bahan", oat.id);
-  h.change("Jumlah", "12"); h.change("Satuan", "L"); h.change("Biaya", "20");
+function fillReceipt(
+  h: ReturnType<typeof harness>
+) {
+  h.change("Supplier", supplier.id);
+  h.change(
+    "Diterima",
+    "2026-09-18T08:00"
+  );
+  h.change("Bahan", oat.id);
+  h.change("Jumlah", "12");
+  h.change("Biaya", "20");
 }
 
 test("inventory route guards before any data read; stock role gets only inventory and logout", async () => {
@@ -89,7 +246,28 @@ test("inventory route guards before any data read; stock role gets only inventor
   const page = load("./page.tsx", {
     "next/link": { default: "a" }, "next/navigation": { redirect() {} }, "@/lib/auth/actions": { logoutAction() {} },
     "@/lib/auth/authorization": { requireInventoryManager: async () => { if (!["ADMIN", "STOCK_MANAGEMENT"].includes(role)) throw new Error("denied"); return { id: "actor", role, name: "Staff", passwordHash: "secret" }; } },
-    "@/lib/inventory/actions": { listIngredientsAction: async () => { reads++; return ingredientResult; }, listSuppliersAction: async () => { reads++; return supplierResult; }, listStockInsAction: async () => { reads++; return history; } },
+    "@/lib/inventory/actions": {
+    listIngredientsAction: async () => {
+      reads++;
+      return ingredientResult;
+    },
+    listSuppliersAction: async () => {
+      reads++;
+      return supplierResult;
+    },
+    listStockInsAction: async () => {
+      reads++;
+      return history;
+    },
+    listStockMovementsAction: async () => {
+      reads++;
+      return movementResult;
+    },
+    getStockDashboardAction: async () => {
+      reads++;
+      return dashboardResult;
+    },
+  },
     "./inventory-workspace": { InventoryWorkspace: "Workspace" },
   });
   for (role of ["FINANCE", "CASHIER", "anonymous"]) { await assert.rejects(async () => page.default(), /denied/); assert.equal(reads, 0); }
@@ -102,22 +280,95 @@ test("inventory route guards before any data read; stock role gets only inventor
   }
 });
 
-test("stock overview renders exact server balances/statuses with search, filter and failed reads", async () => {
-  const h = harness("./inventory-workspace.tsx", "InventoryWorkspace", { actorId: "stock-user", initialIngredients: ingredientResult, initialSuppliers: supplierResult, initialHistory: history });
-  assert.match(text(h.render()), /12.000 ml.*Tersedia.*Beans.*Habis.*Cups.*Stok rendah/);
-  h.change("Cari bahan", "oat"); assert.equal(elements(h.render()).filter(e => e.type === "article").length, 1);
-  h.change("Cari bahan", ""); h.change("Status", "LOW"); assert.equal(elements(h.render()).filter(e => e.type === "article").length, 1);
-  assert.equal(presentation.quantity("999999999999999.999"), "999.999.999.999.999,999");
-  const slow = h.click("Muat ulang stok"), newer = h.click("Muat ulang stok");
-  h.calls[2].resolve(unavailable); h.calls[3].resolve(supplierResult); await newer;
-  h.calls[0].resolve(ingredientResult); h.calls[1].resolve(supplierResult); await slow;
-  assert.match(text(h.render()), /Data belum dapat dimuat/); assert.doesNotMatch(text(h.render()), /12.000 ml/);
-  const retry = h.click("Muat ulang stok"); h.calls[4].resolve({ success: true, ingredients: [] }); h.calls[5].resolve(supplierResult); await retry;
-  assert.match(text(h.render()), /Belum ada bahan/);
-});
+test(
+  "stock overview renders server balances and supports search/status filters",
+  async () => {
+    const props = {
+      result: ingredientResult,
+      loading: false,
+      reload: async () => {},
+      onWriting: () => {},
+      onSaved: () => {},
+    };
+
+    const h = harness(
+      "./ingredients-panel.tsx",
+      "IngredientsPanel",
+      props
+    );
+
+    assert.match(
+      text(h.render()),
+      /Oatmilk.*Stok: 12000 ml.*Status: Aktif.*Beans.*Stok: 0 g.*Status: Kosong.*Cups.*Stok: 0.001 pcs.*Status: Aktif/
+    );
+
+    h.change("Cari bahan", "oat");
+
+    assert.equal(
+      elements(h.render()).filter(
+        e => e.type === "article"
+      ).length,
+      1
+    );
+
+    h.change("Cari bahan", "");
+
+    await h.click("Kosong 1");
+
+    assert.equal(
+      elements(h.render()).filter(
+        e => e.type === "article"
+      ).length,
+      1
+    );
+
+    assert.equal(
+      presentation.quantity(
+        "999999999999999.999"
+      ),
+      "999.999.999.999.999,999"
+    );
+
+    const failed = harness(
+      "./ingredients-panel.tsx",
+      "IngredientsPanel",
+      {
+        ...props,
+        result: unavailable,
+      }
+    );
+
+    assert.match(
+      text(failed.render()),
+      /Data bahan belum dapat dimuat/
+    );
+
+    const empty = harness(
+      "./ingredients-panel.tsx",
+      "IngredientsPanel",
+      {
+        ...props,
+        result: {
+          success: true,
+          ingredients: [],
+        },
+      }
+    );
+
+    assert.match(
+      text(empty.render()),
+      /Bahan tidak ditemukan/
+    );
+  }
+);
+
 
 test("supplier save cannot discard receiving stock refresh or restore stale suppliers; history refreshes too", async () => {
-  const workspace = harness("./inventory-workspace.tsx", "InventoryWorkspace", { actorId: "stock-user", initialIngredients: ingredientResult, initialSuppliers: supplierResult, initialHistory: history });
+  const workspace = harness(
+  "./inventory-workspace.tsx",
+  "InventoryWorkspace",
+  workspaceProps()
+);
   const panel = (type: string) => elements(workspace.render()).find(e => e.type === type)!;
   const initialHistory = panel("StockInHistory");
   const receiving = harness("./stock-in-form.tsx", "StockInForm", panel("StockInForm").props);
@@ -143,9 +394,17 @@ test("supplier save cannot discard receiving stock refresh or restore stale supp
   workspace.calls[0].resolve({ success: true, ingredients: [{ ...oat, currentStock: "24000" }] });
   workspace.calls[1].resolve(supplierResult); // Older read still says the supplier is active.
   await settle();
-  await workspace.click("Stok bahan");
-  assert.match(text(workspace.render()), /24.000 ml/);
-  assert.doesNotMatch(text(workspace.render()), /12.000 ml/);
+  await workspace.click("Master Bahan");
+
+  const currentIngredients =
+    panel("IngredientsPanel").props
+      .result as typeof ingredientResult;
+
+  assert.equal(
+    currentIngredients.ingredients[0]
+      .currentStock,
+    "24000"
+  );
   assert.equal(panel("StockInForm").props.loading, false);
   const currentSuppliers = panel("SuppliersPanel").props.result as typeof supplierResult;
   assert.equal(currentSuppliers.suppliers.find(row => row.id === supplier.id)?.active, false);
@@ -158,17 +417,38 @@ test("supplier save cannot discard receiving stock refresh or restore stale supp
 });
 
 test("workspace keeps newer stock and suppliers across tab changes and ignores reads after unmount", async () => {
-  const h = harness("./inventory-workspace.tsx", "InventoryWorkspace", { actorId: "stock-user", initialIngredients: ingredientResult, initialSuppliers: supplierResult, initialHistory: history });
-  const reload = h.button("Muat ulang stok").props.onClick as () => Promise<void>;
+  const h = harness(
+  "./inventory-workspace.tsx",
+  "InventoryWorkspace",
+  workspaceProps()
+);
+  const reload = () =>
+  (
+    elements(h.render()).find(
+      e => e.type === "IngredientsPanel"
+    )!.props.reload as () => Promise<void>
+  )();
   const older = reload();
   await h.click("Supplier");
   const newer = reload();
-  await h.click("Stok bahan");
+  await h.click("Master Bahan");
   h.calls[2].resolve({ success: true, ingredients: [{ ...oat, currentStock: "36000" }] });
   h.calls[3].resolve({ success: true, suppliers: [{ ...supplier, active: false }] }); await newer;
   h.calls[0].resolve(ingredientResult); h.calls[1].resolve(supplierResult); await older;
-  assert.match(text(h.render()), /36.000 ml/);
-  assert.doesNotMatch(text(h.render()), /12.000 ml/);
+  const ingredientPanel = () =>
+  elements(h.render()).find(
+    e => e.type === "IngredientsPanel"
+  )!;
+
+  const currentIngredients =
+    ingredientPanel().props
+      .result as typeof ingredientResult;
+
+  assert.equal(
+    currentIngredients.ingredients[0]
+      .currentStock,
+    "36000"
+  );
   const supplierPanel = () => elements(h.render()).find(e => e.type === "SuppliersPanel")!;
   assert.equal((supplierPanel().props.result as typeof supplierResult).suppliers[0].active, false);
   const pending = reload(); h.unmount();
@@ -184,12 +464,26 @@ test("Stock In restricts units and inactive options, sends one request and uses 
   const h = harness("./stock-in-form.tsx", "StockInForm", { ...receivingProps(), onSaved: () => { refreshed++; } });
   fillReceipt(h);
   assert.doesNotMatch(text(h.render()), /Inactive/);
-  const units = elements(elements(h.render()).find(e => e.type === "label" && text(e).startsWith("Satuan"))).filter(e => e.type === "option").map(e => e.props.value);
-  assert.deepEqual(units, ["ml", "L"]);
+  const unitLabel = elements(h.render()).find(
+  e =>
+    e.type === "label" &&
+      text(e).startsWith("Satuan")
+  );
+
+  assert.ok(unitLabel);
+
+  const unitInput = elements(
+    unitLabel
+  ).find(e => e.type === "input");
+
+assert.ok(unitInput);
+assert.equal(unitInput.props.value, "ml");
+assert.equal(unitInput.props.readOnly, true);
   const handler = h.submitHandler(), event = { preventDefault() {} };
   const pending = handler(event); await handler(event);
   assert.equal(h.calls.length, 1); assert.equal(h.storage.size, 1);
   const request = h.calls[0].input as receiving.ReceivingSubmission;
+  assert.equal(request.items[0].unit, "ml");
   assert.equal(request.items[0].quantity, "12"); assert.equal(request.items[0].unitCost, 20); assert.equal(request.receivedAt, "2026-09-18T08:00:00+07:00");
   assert.ok(elements(h.render()).filter(e => e.type === "fieldset").every(e => e.props.disabled));
   h.calls[0].resolve({ success: true, stockIn: saved }); await pending;
@@ -278,3 +572,89 @@ test("history remount after receiving reloads server history and ignores respons
   const pending = h.click("Muat ulang riwayat"); h.unmount(); h.calls[1].resolve({ success: true, entries: [], nextCursor: null }); await pending;
   assert.match(text(h.render()), /Memuat riwayat/);
 });
+
+test(
+  "stock dashboard renders current KPIs and reloads movement period",
+  async () => {
+    const h = harness(
+      "./stock-dashboard.tsx",
+      "StockDashboard",
+      {
+        initial: dashboardResult,
+      }
+    );
+
+    const initialText = text(h.render());
+
+    assert.match(initialText, /Dashboard Stok/);
+    assert.match(initialText, /Nilai Stok Bahan/);
+    assert.match(initialText, /Rp240\.000/);
+    assert.match(initialText, /Bahan Aktif.*3 bahan/);
+    assert.match(initialText, /Bahan Kosong.*1 bahan/);
+    assert.match(initialText, /Hampir Habis.*1 bahan/);
+    assert.match(
+      initialText,
+      /Biaya Belum Lengkap.*0 bahan/
+    );
+    assert.match(
+      initialText,
+      /Stok Masuk.*1 aktivitas/
+    );
+    assert.match(
+      initialText,
+      /Stok Keluar.*0 aktivitas/
+    );
+
+    const pending = h.click("7 Hari");
+
+    assert.equal(
+      h.calls[0].name,
+      "getStockDashboardAction"
+    );
+
+    assert.deepEqual(
+      h.calls[0].input,
+      {
+        period: "7D",
+      }
+    );
+
+    h.calls[0].resolve({
+      success: true,
+      dashboard: {
+        ...dashboardResult.dashboard,
+        period: {
+          ...dashboardResult.dashboard.period,
+          type: "7D",
+        },
+        movement: {
+          stockInMovementCount: 4,
+          stockOutMovementCount: 7,
+          series: [
+            {
+              date: "2026-09-18",
+              stockIn: 4,
+              stockOut: 7,
+            },
+          ],
+        },
+      },
+    });
+
+    await pending;
+
+    const updatedText = text(h.render());
+
+    assert.match(
+      updatedText,
+      /Stok Masuk.*4 aktivitas/
+    );
+
+    assert.match(
+      updatedText,
+      /Stok Keluar.*7 aktivitas/
+    );
+
+    assert.match(updatedText, /7 Hari/);
+  }
+);

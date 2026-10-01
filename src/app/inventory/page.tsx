@@ -3,21 +3,29 @@ import { redirect } from "next/navigation";
 import { requireInventoryManager } from "@/lib/auth/authorization";
 import { logoutAction } from "@/lib/auth/actions";
 import { 
+  getStockDashboardAction,
   listIngredientsAction,
   listStockInsAction,
   listSuppliersAction,
   listStockMovementsAction
 } from "@/lib/inventory/actions";
 import { InventoryWorkspace } from "./inventory-workspace";
-import { StockMovementHistory } from "./stock-movement-history";
+
 
 export default async function InventoryPage() {
   const actor = await requireInventoryManager();
-  const [ingredients, suppliers, history, movements] = await Promise.all([
+  const [
+  ingredients,
+  suppliers,
+  history,
+  movements,
+  dashboard,
+] = await Promise.all([
   listIngredientsAction(),
   listSuppliersAction(),
   listStockInsAction(),
-  listStockMovementsAction()
+  listStockMovementsAction(),
+  getStockDashboardAction({ period: "30D" }),
 ]);
   async function logout() {
     "use server";
@@ -83,6 +91,7 @@ export default async function InventoryPage() {
       initialSuppliers={suppliers}
       initialHistory={history}
       initialMovements={safeMovements}
+      initialDashboard={dashboard}
     />
   
     </div>
