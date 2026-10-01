@@ -95,7 +95,16 @@ test("Finance route and dashboard enforce fresh authorization before rendering r
 test("Finance dashboard authorizes before exposing period reporting", async () => {
   let allowed = false;
   const dashboard = load("./finance-dashboard.tsx", {
-    "@/lib/auth/authorization": { requireFinanceManager: async () => { if (!allowed) throw new Error("denied"); } },
+    "@/lib/auth/authorization": {
+  requireFinanceManager: async () => {
+    if (!allowed) throw new Error("denied");
+
+    return {
+      id: "admin",
+      role: "ADMIN",
+    };
+  },
+},
     "./finance/report-panel": { FinanceReportPanel: "period-report" },
   });
   await assert.rejects(async () => dashboard.FinanceDashboard(), /denied/);
@@ -103,24 +112,91 @@ test("Finance dashboard authorizes before exposing period reporting", async () =
   assert.ok(elements(await dashboard.FinanceDashboard()).some(e => e.type === "period-report" && e.props.mode === "dashboard"));
 });
 
-test("Finance navigation contains only approved reports, expenses and secure logout", async () => {
+test("Finance navigation exposes Admin return only to ADMIN and keeps secure logout", async () => {
   let loggedOut = false;
+
   const nav = load("./finance-navigation.tsx", {
     "next/link": { default: "a" },
-    "@/lib/auth/actions": { logoutAction: async () => { loggedOut = true; } },
-    "next/navigation": { redirect(path: string) { assert.equal(loggedOut, true); assert.equal(path, "/login"); } },
+    "@/lib/auth/actions": {
+      logoutAction: async () => {
+        loggedOut = true;
+      },
+    },
+    "next/navigation": {
+      redirect(path: string) {
+        assert.equal(loggedOut, true);
+        assert.equal(path, "/login");
+      },
+    },
   });
-  const render = nav.FinanceNavigation as unknown as (props: { current: string }) => unknown;
-  for (const current of ["dashboard", "report", "monthly", "yearly", "expenses"]) {
-    const tree = render({ current });
-    assert.deepEqual(elements(tree).filter(e => e.props.href).map(e => e.props.href), ["/finance", "/admin/reports", "/finance/reports/monthly", "/finance/reports/yearly", "/finance/expenses"]);
-    assert.match(text(tree), /Dashboard.*Laporan Harian.*Keluar/);
-    assert.doesNotMatch(text(tree), /POS|Stock|Resep|Recipe|Access|Admin|Supplier/);
-    assert.equal(elements(tree).filter(e => e.props["aria-current"] === "page").length, 1);
-    await (elements(tree).find(e => e.type === "form")!.props.action as () => Promise<void>)();
-  }
-});
 
+  const render = nav.FinanceNavigation as unknown as (props: {
+    current: string;
+    role?: string;
+  }) => unknown;
+
+  const financeTree = render({
+    current: "dashboard",
+    role: "FINANCE",
+  });
+
+  assert.deepEqual(
+    elements(financeTree)
+      .filter(e => e.props.href)
+      .map(e => e.props.href),
+    [
+      "/finance",
+      "/admin/reports",
+      "/finance/reports/monthly",
+      "/finance/reports/yearly",
+      "/finance/expenses",
+    ],
+  );
+
+  assert.doesNotMatch(
+    text(financeTree),
+    /Menu Admin/,
+  );
+
+  const adminTree = render({
+    current: "dashboard",
+    role: "ADMIN",
+  });
+
+  assert.deepEqual(
+    elements(adminTree)
+      .filter(e => e.props.href)
+      .map(e => e.props.href),
+    [
+      "/admin",
+      "/finance",
+      "/admin/reports",
+      "/finance/reports/monthly",
+      "/finance/reports/yearly",
+      "/finance/expenses",
+    ],
+  );
+
+  assert.match(
+    text(adminTree),
+    /Menu Admin.*Dashboard.*Laporan Harian.*Laporan Bulanan.*Laporan Tahunan.*Pengeluaran.*Keluar/,
+  );
+
+  assert.equal(
+    elements(adminTree).filter(
+      e => e.props["aria-current"] === "page",
+    ).length,
+    1,
+  );
+
+  const logoutForm = elements(adminTree).find(
+  e => e.type === "form",
+);
+
+assert.ok(logoutForm);
+
+await (logoutForm.props.action as () => Promise<void>)();
+});
 test("inactive Finance session is rejected before dashboard report reads", async () => {
   let reads = 0;
   const current = load("../lib/auth/current-user.ts", {
