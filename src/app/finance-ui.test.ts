@@ -38,6 +38,7 @@ test("Admin home links Finance and preserves existing destinations in order", as
   });
   const links = elements(await page.default()).filter(e => e.props.href);
   assert.deepEqual(links.map(e => [text(e), e.props.href]), [
+    ["Pengadaan (hanya lihat)", "/procurement"],
     ["Access Management", "/admin/users"], ["Stock Management", "/inventory"],
     ["Resep & HPP", "/recipes"], ["Dashboard Finance", "/finance"],
     ["Laporan harian", "/admin/reports"], ["Kembali ke register", "/"],
@@ -150,6 +151,7 @@ test("Finance navigation exposes Admin return only to ADMIN and keeps secure log
       "/finance/reports/monthly",
       "/finance/reports/yearly",
       "/finance/expenses",
+      "/finance/procurement",
     ],
   );
 
@@ -174,6 +176,7 @@ test("Finance navigation exposes Admin return only to ADMIN and keeps secure log
       "/finance/reports/monthly",
       "/finance/reports/yearly",
       "/finance/expenses",
+      "/finance/procurement",
     ],
   );
 

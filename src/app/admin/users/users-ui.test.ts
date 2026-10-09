@@ -47,7 +47,7 @@ function harness(initial: unknown = { success: true, users: [admin, staff] }) {
         return [slots[i], (next: unknown) => { slots[i] = typeof next === "function" ? next(slots[i]) : next; }]; },
       useRef(initial: unknown) { const i = cursor++; if (!(i in slots)) slots[i] = { current: initial }; return slots[i]; },
     },
-    "@/lib/users/domain": { userRoles: ["ADMIN", "CASHIER", "STOCK_MANAGEMENT", "FINANCE"] },
+    "@/lib/users/domain": { userRoles: ["ADMIN", "CASHIER", "STOCK_MANAGEMENT", "FINANCE", "PROCUREMENT"] },
     "@/lib/users/actions": { createUserAction: action("create"), listUsersAction: action("list"),
       changeUserRoleAction: action("role"), setUserActiveAction: action("active") },
   }, { FormData: class { constructor(private form: { data: Record<string, unknown> }) {} get(key: string) { return this.form.data[key]; } } });
@@ -75,12 +75,13 @@ test("user management page guards before listing and admin navigation is reachab
     "next/link": { default: "a" }, "@/lib/auth/authorization": { requireRole: async () => admin },
   });
   const links = elements(await adminPage.default()).filter(e => e.props.href).map(e => e.props.href);
-  assert.deepEqual(links, ["/admin/users", "/inventory", "/recipes", "/finance", "/admin/reports", "/"]);
+  assert.deepEqual(links, ["/procurement", "/admin/users", "/inventory", "/recipes", "/finance", "/admin/reports", "/"]);
 });
 test("all roles and statuses display with self-access controls disabled", () => {
   const h = harness();
   assert.match(text(h.render()), /Admin \(Anda\).*ADMIN.*Aktif.*Staff.*CASHIER/);
-  assert.equal(elements(h.render()).filter(e => e.type === "option").length, 12);
+  assert.equal(elements(h.render()).filter(e => e.type === "option").length, 15);
+  assert.equal(elements(h.render()).filter(e => e.type === "option" && text(e) === "PROCUREMENT").length, 3);
   const articles = elements(h.render()).filter(e => e.type === "article");
   assert.equal(elements(articles[0]).find(e => e.type === "fieldset")!.props.disabled, true);
   assert.equal(elements(articles[1]).find(e => e.type === "fieldset")!.props.disabled, false);

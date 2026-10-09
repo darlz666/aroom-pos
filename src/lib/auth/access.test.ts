@@ -37,11 +37,11 @@ test("every action rejects restricted roles and revoked sessions before service/
       () => inventory.updateSupplierAction({}), () => inventory.createStockInAction({}), () => inventory.getStockInAction(randomUUID()),
       () => inventory.listIngredientsAction(), () => inventory.listStockInsAction({})];
     const recipeReads = [() => recipes.listRecipeOptionsAction(), () => recipes.getRecipeAction(randomUUID()), () => inventory.getRecipeHppAction(randomUUID())];
-    for (const role of ["CASHIER", "STOCK_MANAGEMENT", "FINANCE", null] as const) {
+    for (const role of ["CASHIER", "STOCK_MANAGEMENT", "FINANCE", "PROCUREMENT", null] as const) {
       user = role ? { id: randomUUID(), name: "Staff", loginIdentifier: "staff", role } : null;
       for (const call of [...adminCalls, ...(role !== "CASHIER" ? operationalCalls : []), ...(role !== "STOCK_MANAGEMENT" ? [...inventoryCalls, () => recipes.saveRecipeAction({})] : []),
-        ...(role === "CASHIER" || role === null ? recipeReads : []),
-        ...(role === "STOCK_MANAGEMENT" || role === null ? reportCalls : [])]) {
+        ...(role === "CASHIER" || role === "PROCUREMENT" || role === null ? recipeReads : []),
+        ...(role === "STOCK_MANAGEMENT" || role === "PROCUREMENT" || role === null ? reportCalls : [])]) {
         await assert.rejects(call(), (error: unknown) => {
           assert.equal((error as { digest: string }).digest, `NEXT_REDIRECT;replace;${role ? "/" : "/login"};307;`);
           return true;

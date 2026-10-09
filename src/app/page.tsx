@@ -17,6 +17,7 @@ export default async function Home() {
 
   if (user.role === "STOCK_MANAGEMENT") redirect("/inventory");
   if (user.role === "FINANCE") redirect("/finance");
+  if (user.role === "PROCUREMENT") redirect("/procurement");
   const register = await getActiveShiftAction();
 
   return (

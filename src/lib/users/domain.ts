@@ -2,7 +2,7 @@ import type { User, UserRole } from "../../generated/prisma/client";
 import { normalizeLoginIdentifier } from "../auth/login-identifier";
 import { validatePassword } from "../auth/password-validation";
 
-export const userRoles = ["ADMIN", "CASHIER", "STOCK_MANAGEMENT", "FINANCE"] as const satisfies readonly UserRole[];
+export const userRoles = ["ADMIN", "CASHIER", "STOCK_MANAGEMENT", "FINANCE", "PROCUREMENT"] as const satisfies readonly UserRole[];
 export type ManagedUser = Pick<User, "id" | "name" | "loginIdentifier" | "role" | "active">;
 export type UserActor = Pick<User, "id" | "role">;
 export class UserManagementError extends Error {

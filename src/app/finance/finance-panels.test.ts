@@ -172,7 +172,7 @@ test("all finance actions freshly guard before service work and derive the actor
   actions.expenseSaveAction,
 ];
 
-for (role of [null, "INACTIVE", "CASHIER", "STOCK_MANAGEMENT"]) {
+for (role of [null, "INACTIVE", "CASHIER", "STOCK_MANAGEMENT", "PROCUREMENT"]) {
   for (const action of [...managerActions, actions.financeHistoryDeleteAction]) {
     await assert.rejects(
       action({ role: "ADMIN", actorId: "browser" }),
@@ -214,14 +214,14 @@ test("finance page/action guard reloads current user and rejects missing, revoke
     "server-only": {}, "./current-user": { getCurrentUser: async () => { reads++; return user; } },
     "next/navigation": { redirect: (path: string) => { throw new Error(`redirect ${path}`); } },
   });
-  for (const role of [null, "CASHIER", "STOCK_MANAGEMENT"]) {
+  for (const role of [null, "CASHIER", "STOCK_MANAGEMENT", "PROCUREMENT"]) {
     user = role ? { id: "current", role } : null;
     await assert.rejects(guards.requireFinanceManager(), /redirect/);
   }
   for (const role of ["FINANCE", "ADMIN"]) { user = { id: "current", role }; assert.equal(await guards.requireFinanceManager(), user); }
   user = null; // current-user returns null after account deactivation
   await assert.rejects(guards.requireFinanceManager(), /redirect \/login/);
-  assert.equal(reads, 6);
+  assert.equal(reads, 7);
 });
 
  test("category section renders authoritative amounts, percentages and empty state", () => {

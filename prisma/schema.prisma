@@ -12,6 +12,7 @@ enum UserRole {
   CASHIER
   STOCK_MANAGEMENT
   FINANCE
+  PROCUREMENT
 }
 
 enum ShiftStatus {
@@ -80,6 +81,87 @@ model User {
   transactionAdjustments TransactionAdjustment[]
   transactionVoids TransactionVoid[]
   financeExpenses FinanceExpense[]
+  procurements Procurement[] @relation("ProcurementCreator")
+  procurementDecisions Procurement[] @relation("ProcurementDecision")
+  procurementEvents ProcurementEvent[]
+}
+
+enum ProcurementStatus {
+  DRAFT
+  WAITING_APPROVAL
+  APPROVED
+  REJECTED
+  ORDERED
+  RECEIVED
+  CANCELLED
+}
+
+enum ProcurementCategory {
+  FURNITURE
+  COFFEE_EQUIPMENT
+  BAR_TOOLS
+  ELECTRONICS
+  FIXTURE
+  OTHER
+}
+
+enum ProcurementPriority {
+  NORMAL
+  IMPORTANT
+  URGENT
+}
+
+model Procurement {
+  id String @id @db.Uuid
+  referenceNumber String @unique
+  itemName String
+  category ProcurementCategory
+  quantity Int
+  unit String
+  estimatedUnitPrice Int
+  estimatedTotal Int
+  vendor String?
+  productUrl String?
+  neededDate DateTime? @db.Date
+  priority ProcurementPriority
+  reason String
+  notes String?
+  status ProcurementStatus @default(DRAFT)
+  actualUnitPrice Int?
+  actualTotal Int?
+  createdBy String @db.Uuid
+  creator User @relation("ProcurementCreator", fields: [createdBy], references: [id], onDelete: Restrict)
+  decidedBy String? @db.Uuid
+  decisionActor User? @relation("ProcurementDecision", fields: [decidedBy], references: [id], onDelete: Restrict)
+  decidedAt DateTime? @db.Timestamptz(3)
+  decisionNote String?
+  orderedAt DateTime? @db.Timestamptz(3)
+  receivedAt DateTime? @db.Timestamptz(3)
+  cancelledAt DateTime? @db.Timestamptz(3)
+  cancellationReason String?
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+  revision Int @default(1)
+  events ProcurementEvent[]
+  @@index([status, createdAt])
+}
+
+// Immutable audit history also serves as the actor-bound retry receipt.
+model ProcurementEvent {
+  key String @id @db.Uuid
+  fingerprint String
+  procurementId String @db.Uuid
+  procurement Procurement @relation(fields: [procurementId], references: [id], onDelete: Restrict)
+  operation String
+  fromStatus ProcurementStatus?
+  toStatus ProcurementStatus
+  actorId String @db.Uuid
+  actor User @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  note String?
+  revision Int
+  snapshot Json
+  @@unique([procurementId, revision])
 }
 
 model FinanceExpense {

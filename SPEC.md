@@ -1059,3 +1059,44 @@ stock movements and ADMIN adjustment/void behavior remain unchanged.
   stock with null WAC makes the overall valuation unavailable/incomplete and
   displays the missing-cost ingredient count; never substitute a zero price.
   No historical inventory valuation, new costing fields or stock mutations.
+
+## 27. Non-inventory Procurement
+
+- Explicitly approved purchasing scope: equipment/assets only (furniture, coffee
+  equipment, bar tools, electronics, fixtures, other). No Ingredient, StockMovement,
+  StockIn, WAC, recipe HPP, or automatic FinanceExpense integration.
+- PROCUREMENT is assignable through ADMIN Access Management and lands at
+  `/procurement`. FINANCE retains `/finance`; other role routing is unchanged.
+  PROCUREMENT has no POS, inventory, reporting, recipes, or finance expense access.
+- PROCUREMENT creates and edits DRAFT requests, submits for WAITING_APPROVAL,
+  marks APPROVED requests ORDERED and ORDERED requests RECEIVED. FINANCE alone
+  approves/rejects WAITING_APPROVAL; ADMIN has read-only oversight. No self-approval,
+  including a creator whose role subsequently changes to FINANCE.
+- PROCUREMENT can CANCEL DRAFT, WAITING_APPROVAL, or APPROVED with a required
+  reason. ORDERED cannot be cancelled through this initial workflow; REJECTED,
+  RECEIVED and CANCELLED are terminal. Rejection requires a note; approval note
+  is optional. Submitted request fields are frozen, with no resubmission/edit path.
+- One item per request: generated unique reference, bounded item/unit/reason,
+  category FURNITURE/COFFEE_EQUIPMENT/BAR_TOOLS/ELECTRONICS/FIXTURE/OTHER,
+  positive integer quantity, nonnegative integer IDR estimated price, optional
+  vendor, HTTP(S) product URL without credentials, calendar needed date and notes,
+  priority NORMAL/IMPORTANT/URGENT. Server computes totals with exact integer
+  arithmetic bounded to PostgreSQL Int. Actual price is optional at ORDERED only;
+  blank means unknown and actual totals are server computed.
+- Store creator, decision actor/time/note, ordered/received/cancelled times,
+  cancellation reason, timestamps, revision and immutable per-revision events
+  (actor, transition, timestamp, note and snapshot). No hard deletion. Every write
+  freshly authorizes and locks the user, validates expected revision, locks the
+  request, and atomically records history/audit. Actor-bound retry keys replay
+  committed results without changing later state. Client actors/totals/statuses
+  are rejected. Uncertain UI writes retain their exact intent for explicit retry.
+- `/procurement` provides Dashboard, Procurement Requests, New Request and
+  History, with details and a WIB timeline. `/finance/procurement` provides pending
+  approvals, details, decisions and history through existing Finance navigation.
+  Lists paginate in 50-row pages and filter status. Reads have loading, empty and
+  retryable failure states. ADMIN cannot mutate procurement.
+- Dashboard status counts are current across all dates. Received this month uses
+  receivedAt; estimated value this month uses createdAt, including drafts but
+  excluding rejected/cancelled requests; actual value this month uses orderedAt
+  and is unknown if any included actual price is missing. All month boundaries
+  use Asia/Jakarta; these values do not change financial or inventory reporting.

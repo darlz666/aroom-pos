@@ -12,6 +12,26 @@ export async function requireUser(): Promise<AuthenticatedUser> {
   return user;
 }
 
+export async function requireProcurementManager(): Promise<AuthenticatedUser> {
+  const user = await requireUser();
+  if (user.role !== "PROCUREMENT" && user.role !== "ADMIN") redirect("/");
+  return user;
+}
+
+export async function requireProcurementReader(): Promise<AuthenticatedUser> {
+  const user = await requireUser();
+  if (!["PROCUREMENT", "FINANCE", "ADMIN"].includes(user.role)) redirect("/");
+  return user;
+}
+
+export async function requireProcurementWriter(): Promise<AuthenticatedUser> {
+  return requireRole("PROCUREMENT");
+}
+
+export async function requireProcurementApprover(): Promise<AuthenticatedUser> {
+  return requireRole("FINANCE");
+}
+
 export async function requireRole(role: AuthenticatedUser["role"]): Promise<AuthenticatedUser> {
   const user = await requireUser();
   if (user.role !== role) redirect("/");
