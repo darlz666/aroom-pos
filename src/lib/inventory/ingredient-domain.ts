@@ -1,16 +1,11 @@
-import { InventoryUnit } from "../../generated/prisma/client";
-import { inventoryObject, name } from "./domain";
+import { canonicalUnit, inventoryObject, name } from "./domain";
 
 export function ingredientMasterInput(input: unknown) {
   const raw = inventoryObject(input, ["name", "baseUnit"]);
 
-  if (!Object.values(InventoryUnit).includes(raw.baseUnit as InventoryUnit)) {
-    throw new Error("INVALID_INPUT");
-  }
-
   return {
     name: name(raw.name),
-    baseUnit: raw.baseUnit as InventoryUnit,
+    baseUnit: canonicalUnit(raw.baseUnit),
   };
 }
 

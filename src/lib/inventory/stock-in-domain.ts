@@ -3,7 +3,7 @@ import type { Ingredient } from "../../generated/prisma/client";
 import { convertQuantity, ingredientUnitCost, InventoryError, inventoryId, inventoryObject, inventoryQuantity, inventoryUnit, optionalInventoryText } from "./domain";
 import { COST_SCALE, purchaseLineTotal } from "./costing";
 
-function receivedInstant(value: unknown): Date {
+export function receivedInstant(value: unknown): Date {
   // Require an explicit offset: tablet/server timezone must never reinterpret dates.
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/.test(value)) throw new InventoryError("INVALID_INPUT");
   const date = new Date(value);

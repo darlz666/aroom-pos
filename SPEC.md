@@ -79,7 +79,12 @@ This document is the single source of truth for product behavior and MVP scope.
 
 - Cash
 - Manual BCA EDC
-- Midtrans QRIS
+- Midtrans QRIS (deferred; disabled for the approved initial launch)
+
+Owner-approved initial payment scope: CASH and manually confirmed BCA EDC only.
+QRIS remains disabled until its server-verified provider integration is implemented
+and separately accepted. QRIS rules below describe future requirements, not an
+available launch payment method. This scope decision changes no payment logic.
 
 ### Receipt
 
@@ -1100,3 +1105,162 @@ stock movements and ADMIN adjustment/void behavior remain unchanged.
   excluding rejected/cancelled requests; actual value this month uses orderedAt
   and is unknown if any included actual price is missing. All month boundaries
   use Asia/Jakarta; these values do not change financial or inventory reporting.
+
+## 28. Inventory Purchase Order: Approved Actual Price Variance Policy
+
+This policy applies to ingredient/consumable inventory purchase orders, separate
+from the asset Procurement domain in section 27. Phase 1B documents the policy
+and accounts for future immutable receipt/audit evidence in its architecture;
+it does not implement receipt posting or UI. Receiving enforcement and Finance
+display belong to Phase 1C. This policy does not expand Phase 1B's approved scope.
+
+- STOCK_MANAGEMENT may receive goods when the actual receiving price exceeds
+  the Finance-approved estimated price. Finance reapproval is not required, but
+  a non-empty explanation is mandatory; whitespace-only text is not sufficient.
+- Enforce the explanation requirement on the server for each receipt line whose
+  actual cost exceeds its approved estimated cost for the equivalent received
+  quantity. Respect purchase-to-base-unit conversions; do not compare different
+  quantities or let savings on another line conceal an over-estimate line.
+- Calculate estimated value, actual value and variance (actual minus estimated)
+  using the existing exact quantity and costing rules in section 23. Preserve
+  integer IDR transaction amounts and scaled-integer internal costs; do not use
+  floating-point money or silently round an unrepresentable value. Unknown actual
+  prices must never become zero. Keep approved estimates separate from actuals.
+- The receipt/audit architecture must retain immutable evidence for each receipt
+  line: PO line ID, receipt reference, estimated value for the received quantity,
+  actual value, signed variance, explanation, authenticated actor and server
+  timestamp. Preserve the approved price, received quantity, units and conversion
+  basis needed to reproduce the comparison without relying on mutable masters.
+- Partial deliveries may have different actual prices and explanations. Preserve
+  each delivery's evidence independently; subsequent receipts must not overwrite
+  earlier prices, reasons or approval evidence.
+- In Phase 1C, post accepted stock, WAC, receipt/variance evidence and PO receiving
+  progress atomically through the shared authoritative Stock In posting mechanism.
+  Retrying the same receipt must not duplicate inventory or audit evidence. Any
+  failure rolls back all writes. WAC follows serialized posting order.
+- Receiving must not automatically create Finance expenses or cash outflows.
+  Phase 1C must display each receipt's variance and explanation to FINANCE.
+
+## 29. Inventory Purchase Order Backend (Phase 1B)
+
+- Separate InventoryPurchaseOrder, InventoryPurchaseOrderLine and
+  InventoryPurchaseOrderEvent models cover ingredient/consumable purchasing.
+  Asset Procurement is unchanged. This phase has no PO UI or receipt posting.
+- STOCK_MANAGEMENT creates and edits DRAFT POs, submits them for approval and
+  marks approved POs ORDERED. FINANCE alone approves/rejects WAITING_APPROVAL
+  POs. The original creator cannot decide their own PO, even after a role change.
+  ADMIN has read-only oversight. CASHIER and PROCUREMENT have no PO access.
+  Each service reloads active identity/role; mutation transactions hold the user
+  lock through commit. Existing manual Stock In permissions are unchanged.
+- Supported transitions: DRAFT -> WAITING_APPROVAL, WAITING_APPROVAL -> APPROVED
+  or REJECTED, APPROVED -> ORDERED. Draft edits require the expected revision.
+  Rejection requires a non-empty reason. Submitted commercial terms and approval
+  evidence are frozen. PARTIALLY_RECEIVED, RECEIVED and CANCELLED are reserved
+  statuses; receiving and cancellation mutations are not available in Phase 1B.
+- One existing active Supplier per PO, with a saved name; no automatic supplier
+  creation or merging. A PO has 1-100 lines with either an existing active
+  Ingredient ID or proposed name and canonical base unit (the current required
+  master attributes). Proposals never create ingredients or alter recipes.
+  Exact normalized-name conflicts require explicit selection/resolution; no
+  fuzzy matching. Phase 1C must recheck duplicates when resolving proposals.
+- Preserve line IDs, item-name snapshots, purchase quantities/units, exact base
+  quantities/units, integer IDR prices per purchase unit and server-calculated
+  line/header estimates. Quantities use Decimal(18,3); only kg/g and L/ml convert.
+  Existing exact costing validates integer-rupiah totals and PostgreSQL Int
+  bounds. Never round fractional invoice totals or trust client totals.
+- Unique stable IPO references use the Asia/Jakarta creation date and a UUID.
+  Each successful mutation increments one revision and atomically appends an
+  immutable event snapshot and audit. Actor-bound normalized intent fingerprints
+  and retry keys replay the saved result, including after later edits; changed
+  intent is rejected. Parent/key locks serialize concurrent mutations and stale
+  revisions fail. Any write failure rolls back header, lines, event and audit.
+- Authorized readers can list/filter/paginate POs, read details and paginate
+  revision history. No credentials are included. Read snapshots remain consistent.
+- Nullable StockIn.purchaseOrderId and StockInItem.purchaseOrderLineId reserve
+  future links with foreign keys/indexes and supplier/line identity checks.
+  Existing manual receipts retain null links and remain immutable. Future Phase
+  1C must set links during posting, never retrofit historical receipts. Received
+  quantities and actual totals will derive from those posted immutable records,
+  with no second movement ledger or speculative zero-valued actual totals.
+- The frozen PO lines and approval-event snapshots retain the estimate basis for
+  section 28. Phase 1C will append receipt-specific variance evidence referencing
+  the PO line and posted receipt/item, with price/quantity/unit snapshots, reason,
+  actor and timestamp in the same posting transaction. This phase neither writes
+  variance evidence nor activates receiving; its transition/event constraints
+  must be extended explicitly for Phase 1C. No FinanceExpense is generated.
+- Every Phase 1B PO operation is inventory-neutral: no StockIn, StockMovement,
+  Ingredient creation, balance/WAC updates, recipe/HPP or Finance report changes.
+
+## 30. Atomic Inventory PO Receiving Backend (Phase 1C)
+
+- STOCK_MANAGEMENT alone posts deliveries against ORDERED or PARTIALLY_RECEIVED
+  POs. ADMIN and FINANCE can read receipts, progress and variance evidence;
+  CASHIER and PROCUREMENT cannot access these operations. Authentication and
+  current active role are rechecked inside the transaction. Manual Stock In
+  permissions remain unchanged. No PO UI, cancellation or short-close is enabled.
+- Each delivery identifies stable PO line IDs and explicit positive quantities,
+  compatible purchase units and integer actual purchase prices. Receive any
+  nonempty subset of outstanding lines. Reject duplicate/unknown lines, excess
+  quantities, invalid precision, fractional actual invoice totals and overflow.
+  No stock is posted during creation, submission, approval or order placement.
+- Receive ORDERED -> PARTIALLY_RECEIVED or RECEIVED, and PARTIALLY_RECEIVED ->
+  PARTIALLY_RECEIVED or RECEIVED. RECEIVED requires every line fully received.
+  Progress and actual received totals derive from immutable linked StockInItem
+  records, never a second mutable ledger. Unreceived actual totals are unknown.
+- One ReadCommitted transaction covers new master resolution, authoritative
+  postStockIn(), linked receipts/items, PURCHASE movements, balances/WAC, PO
+  revision/status and immutable event/audit records. Receipt links are supplied
+  only at INSERT. No nested independent transaction or separate costing engine.
+- Lock order: active User, operation key, PO identity/header, Stock In key,
+  Supplier, normalized proposed names in sorted order, then existing Ingredient
+  IDs in the shared poster's sorted order. WAC uses the preceding serialized
+  balance/cost, irrespective of a backdated delivery timestamp.
+- Existing ingredient IDs and recipes remain intact. The first proposed-item
+  receipt requires explicit CREATE or EXISTING ingredient resolution. CREATE
+  rechecks the existing PostgreSQL normalized-name uniqueness rule and starts
+  the master at zero stock; posting initializes WAC. A name conflict requires
+  explicit selection, never fuzzy matching. EXISTING requires an active master
+  with the approved base unit. Posted items persist resolved identity for later
+  deliveries; it cannot switch. Reject different PO lines resolving to the same
+  ingredient. Master creation rolls back if any posting/audit step fails.
+- Preserve the actual Supplier ID and name snapshot on each receipt. Do not
+  create/merge suppliers or overwrite historical identities. Later master-name
+  changes never change receipt snapshots.
+- Section 28 applies independently per receipt line: higher actual cost is
+  allowed without Finance reapproval, with a non-empty explanation enforced on
+  the server. Compare equivalent received base quantities using approved terms.
+  StockInItem retains approved unit price/unit, quantity-adjusted estimated amount
+  and signed variance as integer micro-rupiah, alongside existing actual integer
+  IDR lineTotal and original purchase quantity/unit/price. Example: 1 ml against
+  Rp33,333/L has an exact estimate of 33,333,000 micro-rupiah; an actual Rp34 means
+  variance +667,000 micro-rupiah. Never round that estimate to whole rupiah.
+- PO receipt links, variance evidence, actor and server posting timestamp remain
+  immutable. Finance's authorized receipt read service exposes this evidence.
+  Different deliveries retain their own costs/reasons; no FinanceExpense/payment
+  is generated. Received totals are returned as exact integer-IDR strings.
+- Stable receipt keys bind actor, PO/revision, sorted line IDs, quantities/units,
+  actual prices, resolution decisions, reasons and receipt metadata. Identical
+  retries replay the saved result before state/master validation, including after
+  completion, while still rechecking authorization. Changed intent is rejected;
+  concurrent new requests are serialized and stale revisions fail. Manual Stock
+  In fingerprints remain unchanged and cannot collide with PO receipt intent.
+
+## 31. Inventory Purchase Order UI (Phase 2)
+
+- `/inventory/purchase-orders` enables STOCK_MANAGEMENT multi-line draft creation,
+  editing, submission, ordering and partial/full receiving using Phase 1B/1C
+  actions. Select existing suppliers and existing or proposed ingredients; resolve
+  proposals explicitly when receiving. ADMIN has read-only oversight.
+- `/finance/purchase-orders` enables FINANCE approval/rejection, with no
+  self-approval, plus read-only PO details, audit history, actual receiving costs
+  and per-delivery variance explanations. ADMIN remains read-only.
+- Indonesian, touch-friendly screens provide status navigation, paginated lists,
+  receipt/audit history and server-authoritative refresh. Show exact IDR and
+  micro-rupiah variance values; unknown actual costs remain unknown. Section 28
+  applies: increased prices require explanations, without Finance reapproval.
+- Prevent duplicate/offline writes. Persist exact actor-scoped intent and retry
+  key before sending; recover explicitly after interruption. Lock new mutations
+  until resolved. A later rejection must not discard an earlier uncertain intent.
+  Reject stale revisions and reload before a new mutation; discard stale reads.
+- No changes to Phase 1 backend rules, deployed migrations, Stock In/WAC rules,
+  operational data, expense generation, cancellation or short-close scope.

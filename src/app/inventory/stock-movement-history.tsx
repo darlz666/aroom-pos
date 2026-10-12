@@ -1,5 +1,18 @@
 "use client";
 
+import type { listStockMovementsAction } from "@/lib/inventory/actions";
+
+type MovementResult = Awaited<ReturnType<typeof listStockMovementsAction>>;
+type MovementRow = Extract<MovementResult, { success: true }>["movements"][number];
+export type MovementsResult = Extract<MovementResult, { success: false }> | {
+  success: true;
+  movements: (Omit<MovementRow, "quantity" | "stockAfter" | "createdAt"> & {
+    quantity: string;
+    stockAfter: string;
+    createdAt: string;
+  })[];
+};
+
 function formatMovementType(type: string) {
   if (type === "SALE_CONSUMPTION") return "Penjualan";
   if (type === "STOCK_IN") return "Stock In";
@@ -16,7 +29,7 @@ function formatDate(date: string) {
 export function StockMovementHistory({
   movements,
 }: {
-  movements: any;
+  movements: MovementsResult;
 }) {
   if (!movements || !movements.success || !movements.movements?.length) {
     return (
@@ -46,7 +59,7 @@ export function StockMovementHistory({
           </thead>
 
           <tbody>
-            {movements.movements.map((row: any) => {
+            {movements.movements.map(row => {
               const isOut = row.type === "SALE_CONSUMPTION";
 
               return (

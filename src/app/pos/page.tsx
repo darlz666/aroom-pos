@@ -10,11 +10,10 @@ export default async function PosPage() {
   const user = await requireOperator();
   const register = await getActiveShiftAction();
   const canOperate = register.success && (register.state === "OWNED" || register.state === "ADMIN_VIEW");
-  let rawCategories: any = null;
   let categories: MenuCategory[] | null = null;
   if (canOperate) {
   try {
-    rawCategories = await prisma.category.findMany({
+    const rawCategories = await prisma.category.findMany({
   where: { active: true },
   orderBy: [{ displayOrder: "asc" }, { name: "asc" }, { id: "asc" }],
   select: {
@@ -51,12 +50,12 @@ export default async function PosPage() {
 });
 
     if (rawCategories) {
-    categories = rawCategories.map((category: any) => ({
+    categories = rawCategories.map(category => ({
         ...category,
-        products: category.products.map((product: any) => {
+        products: category.products.map(product => {
           const stockIssues =
             product.recipe?.items
-              ?.filter((item: any) => {
+              ?.filter(item => {
                 const required = convertQuantity(
                   item.quantity.toString(),
                   item.unit,
@@ -65,7 +64,7 @@ export default async function PosPage() {
 
                 return item.ingredient.currentStock.lt(required);
               })
-              ?.map((item: any) => item.ingredient.name) ?? [];
+              ?.map(item => item.ingredient.name) ?? [];
 
           return {
             id: product.id,

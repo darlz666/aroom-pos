@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { createStockInAction } from "@/lib/inventory/actions";
-import { compatibleUnits, receivingSubmission, restoreSubmission, type ReceivingLine, type ReceivingSubmission } from "@/lib/inventory/receiving-form";
+import { receivingSubmission, restoreSubmission, type ReceivingLine, type ReceivingSubmission } from "@/lib/inventory/receiving-form";
 import { card, control, inputError, jakartaInput, primary, quantity, readError, rupiah, type IngredientsResult, type SuppliersResult } from "./presentation";
 
 const emptyLine = (): ReceivingLine => ({ ingredientId: "", quantity: "", unit: "pcs", unitCost: "" });

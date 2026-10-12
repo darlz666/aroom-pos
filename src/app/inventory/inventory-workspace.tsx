@@ -16,7 +16,7 @@ import {
   type IngredientsResult,
   type SuppliersResult,
 } from "./presentation";
-import { StockMovementHistory } from "./stock-movement-history";
+import { StockMovementHistory, type MovementsResult } from "./stock-movement-history";
 import {
   StockDashboard,
   type StockDashboardResult,
@@ -34,7 +34,7 @@ export function InventoryWorkspace({
   initialIngredients: IngredientsResult;
   initialSuppliers: SuppliersResult;
   initialHistory: HistoryResult;
-  initialMovements: unknown;
+  initialMovements: MovementsResult;
   initialDashboard: StockDashboardResult;
 }) {
   const [tab, setTab] = useState("dashboard");

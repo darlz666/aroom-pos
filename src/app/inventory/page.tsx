@@ -57,6 +57,7 @@ export default async function InventoryPage() {
   </p>
 
   <div className="flex flex-wrap items-center gap-4">
+    <Link href="/inventory/purchase-orders" className="inline-flex min-h-14 items-center rounded-lg border border-[#a8aea0] px-5 font-semibold">PO Bahan</Link>
     <Link
       href="/recipes"
       className="inline-flex min-h-14 items-center rounded-lg border border-[#a8aea0] px-5 font-semibold"

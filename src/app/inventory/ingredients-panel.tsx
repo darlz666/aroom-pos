@@ -2,6 +2,7 @@
 import { useState } from "react";
 import {
   type IngredientsResult,
+  type IngredientRow,
 } from "./presentation";
 
 import {
@@ -24,14 +25,12 @@ export function IngredientsPanel({
   result,
   loading,
   reload,
-  onWriting,
-  onSaved,
 }: {
   result: IngredientsResult;
   loading: boolean;
   reload: () => Promise<void>;
   onWriting: (busy: boolean) => void;
-  onSaved: (ingredient: any) => void;
+  onSaved: (ingredient: IngredientRow) => void;
 }) {
     const [fields, setFields] = useState(blank);
     const [busy, setBusy] = useState(false);

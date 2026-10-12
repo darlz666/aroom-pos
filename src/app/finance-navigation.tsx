@@ -9,7 +9,7 @@ export function FinanceNavigation({
   current,
   role,
 }: {
-  current: "dashboard" | "report" | "monthly" | "yearly" | "expenses" | "procurement";
+  current: "dashboard" | "report" | "monthly" | "yearly" | "expenses" | "procurement" | "purchase-orders";
   role?: string;
 }) {
   async function logout() {
@@ -68,6 +68,7 @@ export function FinanceNavigation({
       </Link>
 
       <Link href="/finance/procurement" aria-current={current === "procurement" ? "page" : undefined} className={control}>Pengadaan</Link>
+      <Link href="/finance/purchase-orders" aria-current={current === "purchase-orders" ? "page" : undefined} className={control}>PO Bahan</Link>
       <form action={logout}>
         <button type="submit" className={control}>
           Keluar

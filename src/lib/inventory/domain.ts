@@ -34,7 +34,7 @@ export function inventoryUnit(value: unknown): InventoryUnit {
 }
 
 export function canonicalUnit(value: unknown): BaseUnit {
-  return inventoryUnit(value) as BaseUnit;
+  return conversions[inventoryUnit(value)].unit;
 }
 
 /** Exact decimals only, bounded to NUMERIC(18,3); never round or clamp inputs. */

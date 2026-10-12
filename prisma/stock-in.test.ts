@@ -181,18 +181,34 @@ test("Stock In PostgreSQL transactions, supplier management and shared balances"
       const request = () => ({ ...payload(), items: [{ ingredientId: ingredient.id, quantity: "1", unit: "pcs", unitCost: 10 }] });
       for (let i = 0; i < 27; i++) await createStockIn(db, manager, request());
       const before = await counts();
+      // Other suites retain append-only receipts in the shared disposable DB.
+      // Snapshot every row so pagination must neither omit nor duplicate them.
+      const expected = await db.stockIn.findMany({ orderBy: [{ createdAt: "desc" }, { id: "desc" }], select: { id: true } });
+      assert.equal(expected.length, before.receipts);
       const first = await listStockIns(db, manager);
       assert.equal(first.entries.length, 25); assert.ok(first.nextCursor);
       assert.equal(first.entries[0].actorName, manager.name); assert.equal(first.entries[0].total, 10);
       const later = await createStockIn(db, manager, request());
-      const second = await listStockIns(db, manager, { cursor: first.nextCursor });
-      const expected = await db.stockIn.findMany({ where: { id: { not: later.id } }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], select: { id: true } });
-      assert.deepEqual([...first.entries, ...second.entries].map(row => row.id), expected.map(row => row.id));
-      assert.equal(second.nextCursor, null); assert.equal(new Set([...first.entries, ...second.entries].map(row => row.id)).size, expected.length);
+      const pages = [first];
+      for (let offset = 0; offset < expected.length; offset += 25) {
+        const page = pages[pages.length - 1];
+        assert.deepEqual(page.entries.map(row => row.id), expected.slice(offset, offset + 25).map(row => row.id));
+        if (offset + 25 < expected.length) {
+          assert.equal(page.nextCursor, page.entries[24].id);
+          pages.push(await listStockIns(db, manager, { cursor: page.nextCursor }));
+        } else {
+          assert.equal(page.nextCursor, null);
+        }
+      }
+      const receivedIds = pages.flatMap(page => page.entries.map(row => row.id));
+      assert.deepEqual(receivedIds, expected.map(row => row.id));
+      assert.equal(new Set(receivedIds).size, expected.length);
+      assert.ok(!receivedIds.includes(later.id));
+      assert.deepEqual(await db.stockIn.findMany({ where: { id: { not: later.id } }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], select: { id: true } }), expected);
       await db.ingredient.update({ where: { id: ingredient.id }, data: { name: "Renamed fixture", active: false } });
       const detail = await getStockIn(db, admin, later.id);
       assert.equal(detail.items[0].ingredientName, ingredient.name); assert.equal(detail.total, 10); assert.equal(detail.actorName, manager.name);
-      assert.doesNotMatch(JSON.stringify([first, second, detail]), /passwordHash|requestFingerprint|idempotencyKey/);
+      assert.doesNotMatch(JSON.stringify([pages, detail]), /passwordHash|requestFingerprint|idempotencyKey/);
       await assert.rejects(listStockIns(db, manager, { cursor: "bad" }), { code: "INVALID_ID" });
       await assert.rejects(listStockIns(db, manager, { actorId: manager.id }), { code: "INVALID_INPUT" });
       assert.equal((await counts()).receipts, before.receipts + 1);

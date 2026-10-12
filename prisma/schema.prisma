@@ -84,6 +84,9 @@ model User {
   procurements Procurement[] @relation("ProcurementCreator")
   procurementDecisions Procurement[] @relation("ProcurementDecision")
   procurementEvents ProcurementEvent[]
+  inventoryPurchaseOrders InventoryPurchaseOrder[] @relation("InventoryPOCreator")
+  inventoryPurchaseDecisions InventoryPurchaseOrder[] @relation("InventoryPODecision")
+  inventoryPurchaseEvents InventoryPurchaseOrderEvent[]
 }
 
 enum ProcurementStatus {
@@ -399,6 +402,7 @@ model Ingredient {
   recipeItems  RecipeItem[]
   movements    StockMovement[]
   stockInItems StockInItem[]
+  purchaseOrderLines InventoryPurchaseOrderLine[]
 
   // Composite foreign keys enforce canonical units in recipes and history.
   @@unique([id, baseUnit])
@@ -414,6 +418,7 @@ model Supplier {
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
   stockIns  StockIn[]
+  purchaseOrders InventoryPurchaseOrder[]
 }
 
 // Posted receiving records are immutable. Retry keys identify original intent.
@@ -431,7 +436,11 @@ model StockIn {
   supplier           Supplier      @relation(fields: [supplierId], references: [id], onDelete: Restrict)
   actor              User          @relation(fields: [actorId], references: [id], onDelete: Restrict)
   items              StockInItem[]
+  // Null for manual receiving. Set only at posting in future Phase 1C.
+  purchaseOrderId    String? @db.Uuid
+  purchaseOrder      InventoryPurchaseOrder? @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
+  @@index([purchaseOrderId])
   @@index([supplierId, receivedAt])
   @@index([actorId])
 }
@@ -452,11 +461,106 @@ model StockInItem {
   // Immutable normalized receiving cost; null only on pre-7E history.
   receivedUnitCostMicros BigInt?
   lineTotal              Int
+  purchaseOrderLineId    String? @db.Uuid
+  purchaseOrderLine      InventoryPurchaseOrderLine? @relation(fields: [purchaseOrderLineId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  // PO receipt variance evidence. Null on manual/pre-1C receipts. Estimated
+  // partial amounts may be fractional IDR; integer micro-rupiah preserves them.
+  approvedUnitPrice Int?
+  approvedPurchaseUnit InventoryUnit?
+  approvedEstimatedAmountMicros BigInt?
+  priceVarianceMicros BigInt?
+  varianceReason String?
   stockIn                StockIn       @relation(fields: [stockInId], references: [id], onDelete: Restrict)
   ingredient             Ingredient    @relation(fields: [ingredientId, baseUnit], references: [id, baseUnit], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([stockInId, ingredientId])
   @@index([ingredientId, baseUnit])
+  @@index([purchaseOrderLineId])
+}
+
+enum InventoryPurchaseOrderStatus {
+  DRAFT
+  WAITING_APPROVAL
+  APPROVED
+  REJECTED
+  ORDERED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+model InventoryPurchaseOrder {
+  id String @id @db.Uuid
+  referenceNumber String @unique
+  supplierId String @db.Uuid
+  supplierNameSnapshot String
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy String @db.Uuid
+  creator User @relation("InventoryPOCreator", fields: [createdBy], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  status InventoryPurchaseOrderStatus @default(DRAFT)
+  revision Int @default(1)
+  estimatedTotal Int
+  notes String?
+  submittedAt DateTime? @db.Timestamptz(3)
+  decidedBy String? @db.Uuid
+  decisionActor User? @relation("InventoryPODecision", fields: [decidedBy], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  decidedAt DateTime? @db.Timestamptz(3)
+  decisionNote String?
+  orderedAt DateTime? @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+  lines InventoryPurchaseOrderLine[]
+  events InventoryPurchaseOrderEvent[]
+  stockIns StockIn[]
+
+  @@index([status, createdAt])
+  @@index([supplierId])
+  @@index([createdBy])
+  @@index([decidedBy])
+}
+
+model InventoryPurchaseOrderLine {
+  id String @id @db.Uuid
+  purchaseOrderId String @db.Uuid
+  purchaseOrder InventoryPurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  position Int
+  ingredientId String? @db.Uuid
+  ingredient Ingredient? @relation(fields: [ingredientId, baseUnit], references: [id, baseUnit], onDelete: Restrict, onUpdate: Restrict)
+  itemNameSnapshot String
+  // Null for existing ingredients; proposed master data is metadata only.
+  proposedName String?
+  purchaseQuantity Decimal @db.Decimal(18, 3)
+  purchaseUnit InventoryUnit
+  baseQuantity Decimal @db.Decimal(18, 3)
+  baseUnit InventoryUnit
+  estimatedUnitPrice Int
+  estimatedTotal Int
+  stockInItems StockInItem[]
+
+  @@unique([purchaseOrderId, position])
+  @@unique([purchaseOrderId, ingredientId])
+  @@index([ingredientId, baseUnit])
+}
+
+// Immutable per-revision snapshots retain approved terms. Phase 1C will record
+// per-receipt variance evidence referencing the immutable StockIn/StockInItem.
+model InventoryPurchaseOrderEvent {
+  key String @id @db.Uuid
+  fingerprint String
+  purchaseOrderId String @db.Uuid
+  purchaseOrder InventoryPurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  operation String
+  fromStatus InventoryPurchaseOrderStatus?
+  toStatus InventoryPurchaseOrderStatus
+  revision Int
+  actorId String @db.Uuid
+  actor User @relation(fields: [actorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  note String?
+  snapshot Json
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([purchaseOrderId, revision])
+  @@index([actorId])
 }
 
 model Recipe {

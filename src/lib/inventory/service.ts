@@ -1,22 +1,15 @@
 import "server-only";
-import { randomUUID } from "node:crypto";
 import { Prisma, type PrismaClient, type Supplier } from "../../generated/prisma/client";
-import type { AuthenticatedUser } from "../auth/credentials";
-import { InventoryError, inventoryId, inventoryObject, inventoryQuantity, supplierInput } from "./domain";
+import { InventoryError, inventoryId, inventoryObject, supplierInput } from "./domain";
 import { ingredientMasterInput, ingredientUpdateInput } from "./ingredient-domain";
-import { stockInFingerprint, stockInInput, stockInLine } from "./stock-in-domain";
-import { ingredientHpp, rupiahAmount, weightedAverageCost } from "./costing";
+import { postStockIn, stockInDto, stockInInclude } from "./stock-in-posting";
+import { authorizeInventory, type InventoryActor } from "./authorization";
+import { ingredientHpp, rupiahAmount } from "./costing";
 import { withRecipeAccess } from "./recipe-authorization";
 
-type InventoryActor = Pick<AuthenticatedUser, "id" | "role">;
 function authorized<T>(db: PrismaClient, actor: InventoryActor, work: (tx: Prisma.TransactionClient) => Promise<T>) {
   return db.$transaction(async tx => {
-    if (!actor || !["ADMIN", "STOCK_MANAGEMENT"].includes(actor.role)) throw new InventoryError("FORBIDDEN");
-    const id = inventoryId(actor.id);
-    // Hold authorization through commit; account changes apply to the next request.
-    await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${id}::uuid FOR SHARE`;
-    const current = await tx.user.findUnique({ where: { id }, select: { role: true, active: true } });
-    if (!current?.active || !["ADMIN", "STOCK_MANAGEMENT"].includes(current.role)) throw new InventoryError("FORBIDDEN");
+    await authorizeInventory(tx, actor);
     return work(tx);
   }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
 }
@@ -56,59 +49,10 @@ export async function updateSupplier(db: PrismaClient, actor: InventoryActor, in
   });
 }
 
-const stockInInclude = { items: { orderBy: { ingredientId: "asc" as const } } } satisfies Prisma.StockInInclude;
-function stockInDto(receipt: Prisma.StockInGetPayload<{ include: typeof stockInInclude }>) {
-  return { id: receipt.id, referenceNumber: receipt.referenceNumber, supplierId: receipt.supplierId,
-    supplierName: receipt.supplierNameSnapshot, actorId: receipt.actorId, notes: receipt.notes,
-    receivedAt: receipt.receivedAt.toISOString(), createdAt: receipt.createdAt.toISOString(),
-    items: receipt.items.map(item => ({ id: item.id, ingredientId: item.ingredientId, ingredientName: item.ingredientNameSnapshot,
-      inputQuantity: item.inputQuantity.toFixed(), inputUnit: item.inputUnit, baseQuantity: item.baseQuantity.toFixed(), baseUnit: item.baseUnit,
-      unitCost: item.unitCost, purchaseUnitCost: item.purchaseUnitCost,
-      receivedUnitCostMicros: item.receivedUnitCostMicros?.toString() ?? null, lineTotal: item.lineTotal })),
-  };
-}
-
 /** Retry an uncertain submission with the SAME key and payload, never a new key. */
 export async function createStockIn(db: PrismaClient, actor: InventoryActor, input: unknown) {
-  return authorized(db, actor, async tx => {
-    const request = stockInInput(input);
-    const fingerprint = stockInFingerprint(actor.id, request);
-    // Serialize requests for this key before looking for a committed result.
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${request.idempotencyKey}, 731))`;
-    const existing = await tx.stockIn.findUnique({ where: { idempotencyKey: request.idempotencyKey }, include: stockInInclude });
-    if (existing) {
-      if (existing.requestFingerprint !== fingerprint) throw new InventoryError("IDEMPOTENCY_CONFLICT");
-      return { ...stockInDto(existing), replayed: true };
-    }
-    await tx.$queryRaw`SELECT id FROM "Supplier" WHERE id = ${request.supplierId}::uuid FOR SHARE`;
-    const supplier = await tx.supplier.findUnique({ where: { id: request.supplierId } });
-    if (!supplier) throw new InventoryError("SUPPLIER_NOT_FOUND");
-    if (!supplier.active) throw new InventoryError("SUPPLIER_INACTIVE");
-    // All receipts acquire shared ingredients in ID order, avoiding lost updates
-    // and opposite-order deadlocks. Supplier metadata cannot change mid-receipt.
-    const lines = [];
-    for (const item of request.items) {
-      await tx.$queryRaw`SELECT id FROM "Ingredient" WHERE id = ${item.ingredientId}::uuid FOR UPDATE`;
-      const ingredient = await tx.ingredient.findUnique({ where: { id: item.ingredientId } });
-      if (!ingredient) throw new InventoryError("INGREDIENT_NOT_FOUND");
-      const line = stockInLine(item, ingredient);
-      const stockAfter = inventoryQuantity(ingredient.currentStock.plus(line.baseQuantity).toFixed());
-      const weightedAverageUnitCostMicros = weightedAverageCost(ingredient.currentStock.toFixed(),
-        ingredient.weightedAverageUnitCostMicros, line.baseQuantity.toFixed(), line.receivedUnitCostMicros);
-      lines.push({ line, stockAfter, weightedAverageUnitCostMicros });
-    }
-    const id = randomUUID();
-    const receipt = await tx.stockIn.create({ data: { id, referenceNumber: `SI-${id}`, idempotencyKey: request.idempotencyKey,
-      requestFingerprint: fingerprint, supplierId: supplier.id, supplierNameSnapshot: supplier.name,
-      receivedAt: request.receivedAt, actorId: actor.id, notes: request.notes,
-      items: { create: lines.map(({ line }) => line) },
-    }, include: stockInInclude });
-    for (const { line, stockAfter, weightedAverageUnitCostMicros } of lines) {
-      await tx.stockMovement.create({ data: { ingredientId: line.ingredientId, type: "PURCHASE", quantity: line.baseQuantity,
-        unit: line.baseUnit, stockAfter, sourceType: "StockIn", sourceId: id, actorId: actor.id } });
-      await tx.ingredient.update({ where: { id: line.ingredientId }, data: { currentStock: stockAfter, weightedAverageUnitCostMicros } });
-    }
-    return { ...stockInDto(receipt), replayed: false };
+  return db.$transaction(tx => postStockIn(tx, actor, input), {
+    isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
   });
 }
 
