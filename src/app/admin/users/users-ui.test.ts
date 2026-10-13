@@ -42,6 +42,7 @@ function harness(initial: unknown = { success: true, users: [admin, staff] }) {
     return new Promise((yes, no) => { resolve = yes; reject = no; });
   };
   const component = load("./users-panel.tsx", {
+    "next/link": { default: "a" }, "./reset-password-panel": { ResetPasswordPanel: "reset-panel" },
     react: {
       useState(initial: unknown) { const i = cursor++; if (!(i in slots)) slots[i] = initial;
         return [slots[i], (next: unknown) => { slots[i] = typeof next === "function" ? next(slots[i]) : next; }]; },

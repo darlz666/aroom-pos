@@ -4,8 +4,8 @@ import { cookies } from "next/headers";
 import { getSessionCookieOptions, SESSION_COOKIE_NAME } from "./cookie";
 import { signSessionToken, verifySessionToken, type SessionIdentity } from "./session-token";
 
-export async function createSession(userId: string): Promise<void> {
-  const token = await signSessionToken({ userId });
+export async function createSession(userId: string, credentialsVersion: number): Promise<void> {
+  const token = await signSessionToken({ userId, credentialsVersion });
   const store = await cookies();
   store.set(SESSION_COOKIE_NAME, token, getSessionCookieOptions());
 }
@@ -15,7 +15,7 @@ export async function getSessionIdentity(): Promise<SessionIdentity | null> {
   const token = store.get(SESSION_COOKIE_NAME)?.value;
   if (!token) return null;
   const identity = await verifySessionToken(token);
-  return identity ? { userId: identity.userId } : null;
+  return identity ? { userId: identity.userId, credentialsVersion: identity.credentialsVersion } : null;
 }
 
 export async function deleteSession(): Promise<void> {

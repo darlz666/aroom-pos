@@ -41,14 +41,6 @@ export function setActiveInput(input: unknown) {
   return { userId: userId(raw.userId), active: raw.active };
 }
 
-export function resetPasswordInput(input: unknown) {
-  const raw = object(input, ["userId"]);
-
-  return {
-    userId: userId(raw.userId),
-  };
-}
-
 export function deleteUserInput(input: unknown) {
   const raw = object(input, ["userId"]);
 

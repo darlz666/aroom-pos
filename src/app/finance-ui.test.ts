@@ -46,14 +46,15 @@ test("Admin home links Finance and preserves existing destinations in order", as
 });
 
 test("Finance route and dashboard enforce fresh authorization before rendering report reads", async () => {
-  let session: { userId: string } | null = null;
-  let user: { id: string; role: string; active: boolean } | null = null;
+  let session: { userId: string; credentialsVersion: number } | null = null;
+  let user: { id: string; role: string; active: boolean; credentialsVersion: number } | null = null;
   let financeReads = 0;
   const current = load("../lib/auth/current-user.ts", {
+    "next/navigation": { redirect(path: string) { throw new Error(`redirect ${path}`); } },
     "server-only": {}, "./session": { getSessionIdentity: async () => session },
     "./credentials": { safeUserSelect: { id: true, role: true } },
-    "@/lib/db": { prisma: { user: { findFirst: async (query: { where: { active: boolean; id: string } }) => {
-      assert.equal(query.where.active, true);
+    "@/lib/db": { prisma: { user: { findFirst: async (query: { where: { active: boolean; id: string; credentialsVersion: number } }) => {
+      assert.equal(query.where.active, true); assert.equal(query.where.credentialsVersion, 1);
       assert.equal(query.where.id, session!.userId);
       return user?.active ? user : null;
     } } } },
@@ -73,8 +74,8 @@ test("Finance route and dashboard enforce fresh authorization before rendering r
     "../finance-navigation": { FinanceNavigation: "navigation" },
   });
   for (const role of ["ADMIN", "FINANCE", "CASHIER", "STOCK_MANAGEMENT", "anonymous", "inactive"]) {
-    session = role === "anonymous" ? null : { userId: "current" };
-    user = { id: "current", role: role === "inactive" ? "FINANCE" : role, active: role !== "inactive" };
+    session = role === "anonymous" ? null : { userId: "current", credentialsVersion: 1 };
+    user = { id: "current", credentialsVersion: 1, role: role === "inactive" ? "FINANCE" : role, active: role !== "inactive" };
     financeReads = 0;
     if (role === "ADMIN" || role === "FINANCE") {
       const tree = await page.default();
@@ -205,10 +206,11 @@ await (logoutForm.props.action as () => Promise<void>)();
 test("inactive Finance session is rejected before dashboard report reads", async () => {
   let reads = 0;
   const current = load("../lib/auth/current-user.ts", {
-    "server-only": {}, "./session": { getSessionIdentity: async () => ({ userId: "inactive-finance" }) },
+    "next/navigation": { redirect(path: string) { throw new Error(`redirect ${path}`); } },
+    "server-only": {}, "./session": { getSessionIdentity: async () => ({ userId: "inactive-finance", credentialsVersion: 1 }) },
     "./credentials": { safeUserSelect: { id: true, role: true } },
-    "@/lib/db": { prisma: { user: { findFirst: async (query: { where: { active: boolean; id: string } }) => {
-      assert.equal(query.where.active, true); assert.equal(query.where.id, "inactive-finance"); return null;
+    "@/lib/db": { prisma: { user: { findFirst: async (query: { where: { active: boolean; id: string; credentialsVersion: number } }) => {
+      assert.equal(query.where.active, true); assert.equal(query.where.credentialsVersion, 1); assert.equal(query.where.id, "inactive-finance"); return null;
     } } } },
   });
   const guards = load("../lib/auth/authorization.ts", {

@@ -6,10 +6,11 @@ import {
   createUserAction,
   deleteUserAction,
   listUsersAction,
-  resetUserPasswordAction,
   setUserActiveAction,
   updateUserAction,
 } from "@/lib/users/actions";
+import Link from "next/link";
+import { ResetPasswordPanel } from "./reset-password-panel";
 import { userRoles, type ManagedUser } from "@/lib/users/domain";
 
 type Initial = Awaited<ReturnType<typeof listUsersAction>>;
@@ -80,38 +81,6 @@ export function UsersPanel({ actorId, initial }: { actorId: string; initial: Ini
   if (success) {
     setEditTarget(null);
     setNotice("Data akun berhasil diperbarui.");
-  }
-}
-
-  async function resetPassword(user: ManagedUser) {
-  if (inFlight.current || needsReload) return;
-
-  inFlight.current = true;
-  setBusy(true);
-  setError("");
-  setNotice("");
-
-  try {
-    const result = await resetUserPasswordAction({
-      userId: user.id,
-    });
-
-    if (!result.success) {
-      setError(result.error);
-      if (result.code === "UNAVAILABLE") {
-        setNeedsReload(true);
-      }
-      return;
-    }
-
-    setResetTarget(null);
-    setNotice("Password berhasil direset menjadi Masuk123!");
-  } catch {
-    setError(uncertain);
-    setNeedsReload(true);
-  } finally {
-    inFlight.current = false;
-    setBusy(false);
   }
 }
 
@@ -190,11 +159,13 @@ async function removeUser(user: ManagedUser) {
       <fieldset disabled={busy || needsReload} className="grid gap-4 md:grid-cols-2">
         <label className="grid gap-2">Nama<input name="name" required maxLength={128} className={control} autoComplete="off" /></label>
         <label className="grid gap-2">Login<input name="loginIdentifier" required maxLength={128} className={control} autoComplete="off" autoCapitalize="none" spellCheck={false} /></label>
-        <label className="grid gap-2">Password (9–128 karakter)<input name="password" type="password" required className={control} autoComplete="new-password" /></label>
+        <label className="grid gap-2">Password (12-128 karakter)<input name="password" type="password" required className={control} autoComplete="new-password" /></label>
         <label className="grid gap-2">Role<select name="role" defaultValue="CASHIER" className={control}>{userRoles.map(role => <option key={role} value={role}>{role}</option>)}</select></label>
         <button type="submit" className={`${control} font-semibold`}>Tambah pengguna</button>
       </fieldset>
     </form>
+  <Link href="/change-password" className={control}>Ganti password saya</Link>
+  {resetTarget && <ResetPasswordPanel key={resetTarget.id} userId={resetTarget.id} name={resetTarget.name} close={() => setResetTarget(null)} />}
     <section aria-label="Daftar pengguna" className="space-y-4" aria-busy={busy}>
       {!users.length && !needsReload && <p>Belum ada pengguna.</p>}
       {users.map(user => <article key={`${user.id}:${user.role}:${user.active}`} className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-[#dedfd5] bg-[#fffefa] p-6">
@@ -223,7 +194,7 @@ async function removeUser(user: ManagedUser) {
   <button
     type="button"
     className={control}
-    disabled={busy || needsReload}
+    disabled={busy || needsReload || user.role === "ADMIN" || !user.active}
     onClick={() => setResetTarget(user)}
   >
     Reset Password
@@ -299,48 +270,6 @@ async function removeUser(user: ManagedUser) {
   </div>
 )}
 
-  {resetTarget && (
-  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-    <section className="w-full max-w-md rounded-2xl border border-[#dedfd5] bg-[#fffefa] p-6 shadow-2xl">
-      <h2 className="text-2xl font-semibold">
-        Reset Password
-      </h2>
-
-      <p className="mt-3 text-[#62685c]">
-        Password akun <strong>{resetTarget.name}</strong> akan
-        direset menjadi:
-      </p>
-
-      <p className="mt-4 rounded-lg bg-[#f0eee8] p-4 text-xl font-semibold">
-        Masuk123!
-      </p>
-
-      <p className="mt-3 text-sm text-[#62685c]">
-        Password lama tidak dapat digunakan lagi setelah reset.
-      </p>
-
-      <div className="mt-6 flex flex-wrap justify-end gap-3">
-        <button
-          type="button"
-          className={control}
-          disabled={busy}
-          onClick={() => setResetTarget(null)}
-        >
-          Batal
-        </button>
-
-        <button
-          type="button"
-          className={`${control} font-semibold`}
-          disabled={busy}
-          onClick={() => void resetPassword(resetTarget)}
-        >
-          {busy ? "Memproses…" : "Reset Password"}
-        </button>
-      </div>
-    </section>
-  </div>
-)}
 
 {deleteTarget && (
   <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">

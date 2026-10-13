@@ -39,7 +39,7 @@ test("authentication backend with isolated database and request cookies", async 
   const password = " isolated password ";
   const user = {
     id: "test-user", name: "Test", loginIdentifier: "admin", role: "ADMIN" as "ADMIN" | "CASHIER" | "STOCK_MANAGEMENT" | "FINANCE",
-    active: true, passwordHash: await hashPassword(password),
+    credentialsVersion: 1, mustChangePassword: false, temporaryCredentialExpiresAt: null as Date | null, active: true, passwordHash: await hashPassword(password),
   };
   let exists = true;
   let queries = 0;
@@ -50,11 +50,11 @@ test("authentication backend with isolated database and request cookies", async 
     queries++;
     return exists && args.where.loginIdentifier === user.loginIdentifier ? { ...user } : null;
   }) as unknown as typeof prisma.user.findUnique;
-  prisma.user.findFirst = (async (args: { where: { id: string; active: boolean }; select: unknown }) => {
+  prisma.user.findFirst = (async (args: { where: { id: string; active: boolean; credentialsVersion: number }; select: unknown }) => {
     queries++;
-    assert.deepEqual(args.select, { id: true, name: true, loginIdentifier: true, role: true });
+    assert.deepEqual(args.select, { id: true, name: true, loginIdentifier: true, role: true, credentialsVersion: true, mustChangePassword: true, temporaryCredentialExpiresAt: true });
     assert.equal(args.where.active, true);
-    return exists && user.active && args.where.id === user.id ? safeUser() : null;
+    return exists && user.active && args.where.id === user.id && args.where.credentialsVersion === user.credentialsVersion ? { ...safeUser(), credentialsVersion: user.credentialsVersion, mustChangePassword: user.mustChangePassword, temporaryCredentialExpiresAt: user.temporaryCredentialExpiresAt } : null;
   }) as unknown as typeof prisma.user.findFirst;
   const { authenticateCredentials } = await import("./credentials");
   const { createSession, getSessionIdentity } = await import("./session");
@@ -91,7 +91,7 @@ test("authentication backend with isolated database and request cookies", async 
           cookie = undefined;
           await assert.rejects(openShiftAction(0), rejected);
           await assert.rejects(getActiveShiftAction(), rejected);
-          await createSession(user.id);
+          await createSession(user.id, user.credentialsVersion);
           for (const missing of ["inactive", "deleted"]) {
             user.active = missing !== "inactive";
             exists = missing !== "deleted";
@@ -153,7 +153,7 @@ test("authentication backend with isolated database and request cookies", async 
         await assert.rejects(requireUser(), redirectsTo("/login"));
         await assert.rejects(requireRole("ADMIN"), redirectsTo("/login"));
         await assert.rejects(requireInventoryManager(), redirectsTo("/login"));
-        await createSession(user.id);
+        await createSession(user.id, user.credentialsVersion);
         const originalCookie = cookie;
         assert.deepEqual(await requireUser(), safeUser());
         assert.deepEqual(await requireRole("ADMIN"), safeUser());
@@ -169,7 +169,7 @@ test("authentication backend with isolated database and request cookies", async 
           user.role = role;
           if (role === "STOCK_MANAGEMENT") assert.deepEqual(await requireInventoryManager(), safeUser());
           else await assert.rejects(requireInventoryManager(), redirectsTo("/"));
-          assert.deepEqual(await authenticateCredentials("admin", password), safeUser());
+          assert.deepEqual(await authenticateCredentials("admin", password), { ...safeUser(), credentialsVersion: user.credentialsVersion });
           assert.deepEqual(await requireUser(), safeUser());
           await assert.rejects(requireRole("ADMIN"), redirectsTo("/"));
           await assert.rejects(requireOperator(), redirectsTo("/"));
@@ -227,7 +227,7 @@ test("authentication backend with isolated database and request cookies", async 
       }
     });
     await t.test("normalized credentials succeed and return only safe fields", async () => {
-      assert.deepEqual(await authenticateCredentials("  ADMIN  ", password), safeUser());
+      assert.deepEqual(await authenticateCredentials("  ADMIN  ", password), { ...safeUser(), credentialsVersion: user.credentialsVersion });
       assert.equal(await authenticateCredentials("admin", password.trim()), null);
     });
     await t.test("all credential failures have the same result and create no cookie", async () => {
@@ -252,9 +252,9 @@ test("authentication backend with isolated database and request cookies", async 
     });
     await t.test("login creates a fixed lifetime signed identity cookie", async () => {
       assert.deepEqual(await loginAction("admin", password), { success: true });
-      assert.deepEqual(await getSessionIdentity(), { userId: user.id });
+      assert.deepEqual(await getSessionIdentity(), { userId: user.id, credentialsVersion: user.credentialsVersion });
       const claims = decodeJwt(cookie!);
-      assert.deepEqual(Object.keys(claims).sort(), ["aud", "exp", "iat", "iss", "userId"]);
+      assert.deepEqual(Object.keys(claims).sort(), ["aud", "credentialsVersion", "exp", "iat", "iss", "userId"]);
       assert.equal(claims.exp! - claims.iat!, 43200);
       assert.equal(options.maxAge, 43200);
       assert.equal(options.path, "/");
@@ -276,7 +276,7 @@ test("authentication backend with isolated database and request cookies", async 
     });
     await t.test("missing, malformed, tampered, expired and role-bearing tokens fail closed", async () => {
       const now = Math.floor(Date.now() / 1000);
-      const claims = { userId: user.id, iss: "aroom-pos", aud: "aroom-pos:staff-session", iat: now, exp: now + 43200 };
+      const claims = { userId: user.id, credentialsVersion: user.credentialsVersion, iss: "aroom-pos", aud: "aroom-pos:staff-session", iat: now, exp: now + 43200 };
       const key = new TextEncoder().encode(process.env.SESSION_SECRET);
       const sign = (payload: typeof claims & { role?: string }, secret = key) =>
         new SignJWT(payload).setProtectedHeader({ alg: "HS256", typ: "JWT" }).sign(secret);
@@ -297,7 +297,7 @@ test("authentication backend with isolated database and request cookies", async 
       assert.equal(queries, before);
     });
     await t.test("logout expires the cookie at the original path and is repeatable", async () => {
-      await createSession(user.id);
+      await createSession(user.id, user.credentialsVersion);
       assert.deepEqual(await logoutAction(), { success: true });
       assert.equal(cookie, "");
       assert.equal(options.path, "/");

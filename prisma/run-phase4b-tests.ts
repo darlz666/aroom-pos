@@ -23,7 +23,7 @@ async function main() {
   const before = protectedFiles.map(hash);
   const files = ["src", "prisma"].flatMap(dir => readdirSync(dir, { recursive: true })
     .filter(file => typeof file === "string" && file.endsWith(".test.ts")).map(file => join(dir, String(file)).replaceAll("\\", "/")))
-    .filter(file => !focused || /bootstrap|categories/.test(file)).sort();
+    .filter(file => !focused || /bootstrap|categories|auth|access-management|users|change-password/.test(file)).sort();
   const migrationCount = readdirSync("prisma/migrations", { withFileTypes: true }).filter(e => e.isDirectory()).length;
   const results: { file: string; exit: number | null; tests: number; pass: number; fail: number; skipped: number; cancelled: number }[] = [];
   const created: string[] = [];

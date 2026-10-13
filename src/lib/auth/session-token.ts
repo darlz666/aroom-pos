@@ -3,7 +3,7 @@ import "server-only";
 import { SignJWT, jwtVerify } from "jose";
 import { SESSION_LIFETIME_SECONDS } from "./cookie";
 
-export type SessionIdentity = { userId: string };
+export type SessionIdentity = { userId: string; credentialsVersion: number };
 export type VerifiedSession = SessionIdentity & { iat: number; exp: number };
 
 const ALGORITHM = "HS256";
@@ -23,13 +23,13 @@ function isUserId(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
-export async function signSessionToken({ userId }: SessionIdentity): Promise<string> {
+export async function signSessionToken({ userId, credentialsVersion }: SessionIdentity): Promise<string> {
   const key = getSessionKey();
-  if (!isUserId(userId)) {
+  if (!isUserId(userId) || !Number.isInteger(credentialsVersion) || credentialsVersion < 1 || credentialsVersion > 2147483647) {
     throw new Error("A nonempty userId is required.");
   }
   const issuedAt = Math.floor(Date.now() / 1000);
-  return new SignJWT({ userId })
+  return new SignJWT({ userId, credentialsVersion })
     .setProtectedHeader({ alg: ALGORITHM, typ: "JWT" })
     .setIssuer(ISSUER)
     .setAudience(AUDIENCE)
@@ -48,20 +48,21 @@ export async function verifySessionToken(token: string): Promise<VerifiedSession
       typ: "JWT",
       issuer: ISSUER,
       audience: AUDIENCE,
-      requiredClaims: ["userId", "iat", "exp"],
+      requiredClaims: ["userId", "credentialsVersion", "iat", "exp"],
       maxTokenAge: SESSION_LIFETIME_SECONDS,
     });
-    const { userId, iat, exp } = payload;
+    const { userId, credentialsVersion, iat, exp } = payload;
     if (
       !isUserId(userId) ||
+      typeof credentialsVersion !== "number" || !Number.isInteger(credentialsVersion) || credentialsVersion < 1 || credentialsVersion > 2147483647 ||
       typeof iat !== "number" || !Number.isInteger(iat) ||
       typeof exp !== "number" || !Number.isInteger(exp) ||
       exp - iat !== SESSION_LIFETIME_SECONDS ||
-      Object.keys(payload).some((claim) => !["userId", "iat", "exp", "iss", "aud"].includes(claim))
+      Object.keys(payload).some((claim) => !["userId", "credentialsVersion", "iat", "exp", "iss", "aud"].includes(claim))
     ) {
       return null;
     }
-    return { userId, iat, exp };
+    return { userId, credentialsVersion, iat, exp };
   } catch {
     return null;
   }

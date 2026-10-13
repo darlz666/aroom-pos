@@ -1281,3 +1281,39 @@ display belong to Phase 1C. This policy does not expand Phase 1B's approved scop
   Finance, Procurement or PO rules. Authentication policy and password-reset
   changes are outside this phase. See `src/lib/bootstrap/README.md` for safeguards,
   first-use steps, credential handover and disposable verification commands.
+
+## 33. Secure credentials and staff recovery (Phase 4B-2)
+
+- This explicitly supersedes section 5's exclusion of password reset. Only an
+  active, unrestricted ADMIN may reset an active non-ADMIN account, after verifying
+  their own current password inside the serialized access-management transaction.
+  Reject self-reset, ADMIN targets, inactive/missing targets and stale versions.
+- New regular passwords are 12–128 Unicode code points, with exact bytes preserved;
+  reject malformed and whitespace-only inputs. Existing shorter passwords remain
+  valid at login until replaced. First ADMIN bootstrap retains its stronger
+  20–128 policy. No default/shared credentials or automatic delivery providers.
+- Reset generates 24 cryptographically random bytes, encoded as a temporary
+  password, and stores only its Argon2id hash. It expires after 30 minutes and is
+  returned only on the original successful operation, for private ADMIN handover.
+  Never put passwords in URLs, logs, audit records or browser persistent storage.
+- Temporary sessions may access only password change and logout. Server guards
+  enforce both this restriction and expiry on every request. Mandatory replacement
+  requires matching new passwords different from the temporary password. Ordinary
+  voluntary changes require the current password. Both require fresh login afterward.
+- Signed JWTs include a positive credentialsVersion checked against the current
+  active database user. Reset, replacement and deactivation increment it atomically;
+  reactivation never revives old cookies. Reject legacy tokens without a version.
+  Role remains database-authoritative. Login uses the hash/version snapshot actually
+  verified, so a concurrent reset cannot issue a valid token for the new version.
+  Normal lifetime remains 12 hours; temporary expiry is additionally enforced from
+  the database. Logout remains browser-local. Already-authorized in-flight work
+  cannot be retroactively cancelled by reset.
+- Password reset/version/recovery state/audit/operation receipt commit together.
+  Immutable credential audit UUIDs bind actor, target and expected version. A replay
+  returns status only, never regenerates or redisplays the password. After a lost
+  response, inspect authoritative status and explicitly reauthenticate to issue a
+  new operation when needed; this invalidates the previous temporary credential.
+- Sole/locked-out ADMIN emergency recovery is deferred pending separate approval.
+  Login throttling and common-password screening are not implemented here and
+  remain go-live security dependencies. No operational migration or cutover is
+  authorized. See `src/lib/auth/SECURITY.md` for acceptance and deployment boundaries.

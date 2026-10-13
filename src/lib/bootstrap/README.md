@@ -7,8 +7,8 @@ approved backup/restore and deployment procedure first.
 ## First ADMIN
 
 Use the reviewed release and generated Prisma Client with all current migrations
-applied to a NEW, empty database. There are 18 migrations including the candidate
-`20261013000000_category_management`. Keep the application stopped during bootstrap.
+applied to a NEW, empty database. There are 19 migrations including the candidate
+`20261014000000_credential_recovery`. Keep the application stopped during bootstrap.
 The CLI imports no dotenv configuration, does not use `DATABASE_URL`, accepts no
 arguments, and refuses redirected input/output. No development seed is invoked.
 
@@ -47,9 +47,11 @@ account will cause subsequent bootstrap attempts to reject. Do not delete rows
 to force another bootstrap. Errors never print provider exceptions or credentials.
 
 Verify actual HTTPS login, ADMIN access and logout before staff access. Runtime
-credentials must not be migration/owner credentials. No forced-password-change or
-new account-recovery mechanism is introduced here. The previously identified
-shared password-policy/reset discrepancy remains a separate owner-reviewed task.
+credentials must not be migration/owner credentials. Phase 4B-2 supersedes the old
+shared reset mechanism with private temporary credentials, mandatory replacement
+and versioned sessions. Bootstrap creates an ordinary unrestricted ADMIN with
+credentialsVersion 1; emergency ADMIN recovery remains separately deferred.
+See `../auth/SECURITY.md` for the approved recovery and session guarantees.
 
 ## Category management
 

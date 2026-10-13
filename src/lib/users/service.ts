@@ -5,7 +5,6 @@ import {
   changeRoleInput,
   createUserInput,
   deleteUserInput,
-  resetPasswordInput,
   setActiveInput,
   updateUserInput,
   UserManagementError,
@@ -14,7 +13,6 @@ import {
 } from "./domain";
 
 const select = { id: true, name: true, loginIdentifier: true, role: true, active: true } as const;
-const DEFAULT_RESET_PASSWORD = "Masuk123!";
 // Explicit projection also protects callers when a test adapter returns extra fields.
 function dto(user: ManagedUser): ManagedUser {
   return { id: user.id, name: user.name, loginIdentifier: user.loginIdentifier, role: user.role, active: user.active };
@@ -69,7 +67,7 @@ async function updateAccess(db: PrismaClient, actor: UserActor, targetId: string
         await tx.user.count({ where: { role: "ADMIN", active: true } }) <= 1) throw new UserManagementError("LAST_ADMIN");
     if (targetId === actor.id && (!active || role !== "ADMIN")) throw new UserManagementError("SELF_ACCESS_CHANGE");
     if (role === before.role && active === before.active) return dto(before);
-    const user = await tx.user.update({ where: { id: targetId }, data: change, select });
+    const user = await tx.user.update({ where: { id: targetId }, data: { ...change, ...(before.active && !active ? { credentialsVersion: { increment: 1 } } : {}) }, select });
     await tx.auditLog.create({ data: { actorId: actor.id, action: change.role === undefined ? "USER_ACTIVE_CHANGED" : "USER_ROLE_CHANGED",
       entityType: "User", entityId: targetId,
       details: { before: { role: before.role, active: before.active }, after: { role: user.role, active: user.active } } } });
@@ -85,49 +83,6 @@ export async function setUserActive(db: PrismaClient, actor: UserActor, input: u
   await assertAdmin(db, actor);
   const value = setActiveInput(input);
   return updateAccess(db, actor, value.userId, { active: value.active });
-}
-
-export async function resetUserPassword(
-  db: PrismaClient,
-  actor: UserActor,
-  input: unknown
-) {
-  await assertAdmin(db, actor);
-
-  const { userId } = resetPasswordInput(input);
-  const passwordHash = await hashPassword(DEFAULT_RESET_PASSWORD);
-
-  return mutate(db, actor, async tx => {
-    const before = await tx.user.findUnique({
-      where: { id: userId },
-      select,
-    });
-
-    if (!before) {
-      throw new UserManagementError("NOT_FOUND");
-    }
-
-    const user = await tx.user.update({
-      where: { id: userId },
-      data: { passwordHash },
-      select,
-    });
-
-    await tx.auditLog.create({
-      data: {
-        actorId: actor.id,
-        action: "USER_PASSWORD_RESET",
-        entityType: "User",
-        entityId: user.id,
-        details: {
-          role: user.role,
-          active: user.active,
-        },
-      },
-    });
-
-    return dto(user);
-  });
 }
 
 export async function deleteUser(
@@ -178,7 +133,7 @@ export async function deleteUser(
       const user = before.active
         ? await tx.user.update({
             where: { id: userId },
-            data: { active: false },
+            data: { active: false, credentialsVersion: { increment: 1 } },
             select,
           })
         : before;

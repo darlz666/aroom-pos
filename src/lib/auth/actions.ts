@@ -6,7 +6,7 @@ import { createSession, deleteSession } from "./session";
 export async function loginAction(loginIdentifier: unknown, password: unknown) {
   const user = await authenticateCredentials(loginIdentifier, password);
   if (!user) return { success: false, error: "Login atau password salah." } as const;
-  await createSession(user.id);
+  await createSession(user.id, user.credentialsVersion);
   return { success: true } as const;
 }
 

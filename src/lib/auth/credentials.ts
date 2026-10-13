@@ -19,7 +19,7 @@ export const safeUserSelect = {
 export async function authenticateCredentials(
   loginIdentifier: unknown,
   password: unknown,
-): Promise<AuthenticatedUser | null> {
+): Promise<(AuthenticatedUser & { credentialsVersion: number }) | null> {
   if (
     typeof loginIdentifier !== "string" || loginIdentifier.length > 128 ||
     typeof password !== "string" || password.length > PASSWORD_MAX_LENGTH * 2 ||
@@ -31,11 +31,11 @@ export async function authenticateCredentials(
 
   const user = await prisma.user.findUnique({
     where: { loginIdentifier: normalized },
-    select: { ...safeUserSelect, passwordHash: true, active: true },
+    select: { ...safeUserSelect, passwordHash: true, active: true, credentialsVersion: true, mustChangePassword: true, temporaryCredentialExpiresAt: true },
   });
   const passwordMatches = await verifyPassword(user?.passwordHash ?? DUMMY_PASSWORD_HASH, password);
-  if (!user || !passwordMatches || !user.active) {
+  if (!user || !passwordMatches || !user.active || (user.mustChangePassword && (!user.temporaryCredentialExpiresAt || user.temporaryCredentialExpiresAt.getTime() <= Date.now()))) {
     return null;
   }
-  return { id: user.id, name: user.name, loginIdentifier: user.loginIdentifier, role: user.role };
+  return { id: user.id, name: user.name, loginIdentifier: user.loginIdentifier, role: user.role, credentialsVersion: user.credentialsVersion };
 }

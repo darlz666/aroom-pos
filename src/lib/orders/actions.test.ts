@@ -67,9 +67,9 @@ test("authenticated order application boundary", async (t) => {
   const originalOrderRead = prisma.order.findUnique;
   const originalTransaction = prisma.$transaction;
   prisma.user.findFirst = (async (args: { where: { id: string; active: boolean } }) => {
-    assert.deepEqual(args.where, { id: user.id, active: true });
+    assert.deepEqual(args.where, { id: user.id, active: true, credentialsVersion: 1 });
     if (authFailure) throw new Error("secret PostgreSQL credentials");
-    return active ? { ...user } : null;
+    return active ? { ...user, credentialsVersion: 1, mustChangePassword: false, temporaryCredentialExpiresAt: null } : null;
   }) as unknown as typeof prisma.user.findFirst;
   // Any DB work after validation in these boundary tests is an error.
   prisma.order.findUnique = (async () => { throw new Error("unexpected order lookup"); }) as unknown as typeof prisma.order.findUnique;
@@ -89,7 +89,7 @@ test("authenticated order application boundary", async (t) => {
           cookie = value;
           await assert.rejects(action(), (error: unknown) => (error as { digest?: string }).digest === "NEXT_REDIRECT;replace;/login;307;");
         }
-        cookie = await signSessionToken({ userId: user.id }); active = false;
+        cookie = await signSessionToken({ userId: user.id, credentialsVersion: 1 }); active = false;
         await assert.rejects(action(), (error: unknown) => (error as { digest?: string }).digest === "NEXT_REDIRECT;replace;/login;307;");
         active = true;
         for (const role of ["CASHIER", "ADMIN"] as const) {
@@ -111,7 +111,7 @@ test("authenticated order application boundary", async (t) => {
       calls.length = 0; cookie = undefined;
     });
     await t.test("every action redirects missing/invalid/inactive sessions before service calls", async () => {
-      const token = await signSessionToken({ userId: user.id });
+      const token = await signSessionToken({ userId: user.id, credentialsVersion: 1 });
       for (const state of [{ cookie: undefined, active: true }, { cookie: "invalid", active: true }, { cookie: token, active: false }]) {
         cookie = state.cookie;
         active = state.active;
@@ -211,7 +211,7 @@ test("authenticated order application boundary", async (t) => {
       prisma.order.findUnique = (async () => { reads++; if (dbFailure) throw new Error("secret database"); return stored; }) as unknown as typeof prisma.order.findUnique;
       const actions = [() => listOrderHistoryAction(), () => getHistoricalOrderAction(id), () => getReceiptAction(id)];
       try {
-        const token = await signSessionToken({ userId: user.id });
+        const token = await signSessionToken({ userId: user.id, credentialsVersion: 1 });
         for (const state of [{ cookie: undefined, active: true }, { cookie: "invalid", active: true }, { cookie: token, active: false }]) {
           cookie = state.cookie; active = state.active;
           for (const action of actions) await assert.rejects(action(), (error: unknown) => (error as { digest?: string }).digest === "NEXT_REDIRECT;replace;/login;307;");

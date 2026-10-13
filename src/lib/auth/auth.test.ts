@@ -14,11 +14,11 @@ test("identifier normalization is deterministic and idempotent", () => {
 });
 
 test("password policy counts characters without composition or transformation", () => {
-  for (const length of [0, 8, 129]) assert.equal(validatePassword("a".repeat(length)), false);
-  for (const length of [9, 128]) assert.equal(validatePassword("a".repeat(length)), true);
+  for (const length of [0, 8, 11, 129]) assert.equal(validatePassword("a".repeat(length)), false);
+  for (const length of [12, 128]) assert.equal(validatePassword("a".repeat(length)), true);
   assert.equal(validatePassword("😀".repeat(8)), false);
   assert.equal(validatePassword("😀".repeat(128)), true);
-  assert.equal(validatePassword(" aaaaaaa "), true);
+  assert.equal(validatePassword(" aaaaaaaaaaa "), true);
 });
 
 test("Argon2id uses fresh salts and safely verifies passwords and invalid hashes", async () => {
@@ -30,13 +30,12 @@ test("Argon2id uses fresh salts and safely verifies passwords and invalid hashes
   assert.equal(await verifyPassword(first, password), true);
   assert.equal(await verifyPassword(first, password.trim()), false);
   assert.equal(await verifyPassword(first, "wrong password"), false);
-  const resetHash = await hashPassword("Masuk123!");
-  assert.equal(await verifyPassword(resetHash, "Masuk123!"), true);
+  await assert.rejects(hashPassword("short-old"));
   for (const invalid of ["", "invalid", "$argon2id$v=19$broken"]) {
     assert.equal(await verifyPassword(invalid, password), false);
   }
-  await assert.rejects(hashPassword("short"), /9 to 128/);
-  await assert.rejects(hashPassword("a".repeat(129)), /9 to 128/);
+  await assert.rejects(hashPassword("short"), /12 to 128/);
+  await assert.rejects(hashPassword("a".repeat(129)), /12 to 128/);
 });
 
 test("session imports are lazy; tokens enforce identity, signature and lifetime", async () => {
@@ -44,29 +43,29 @@ test("session imports are lazy; tokens enforce identity, signature and lifetime"
   try {
     delete process.env.SESSION_SECRET;
     const { signSessionToken, verifySessionToken } = await import("./session-token");
-    await assert.rejects(signSessionToken({ userId: "staff-1" }), /SESSION_SECRET/);
+    await assert.rejects(signSessionToken({ credentialsVersion: 1, userId: "staff-1" }), /SESSION_SECRET/);
     await assert.rejects(verifySessionToken("invalid"), /SESSION_SECRET/);
     process.env.SESSION_SECRET = "too-short";
-    await assert.rejects(signSessionToken({ userId: "staff-1" }), /SESSION_SECRET/);
+    await assert.rejects(signSessionToken({ credentialsVersion: 1, userId: "staff-1" }), /SESSION_SECRET/);
     process.env.SESSION_SECRET = randomBytes(32).toString("base64");
-    const token = await signSessionToken({ userId: "staff-1" });
+    const token = await signSessionToken({ credentialsVersion: 1, userId: "staff-1" });
     const claims = decodeJwt(token);
-    assert.deepEqual(Object.keys(claims).sort(), ["aud", "exp", "iat", "iss", "userId"]);
+    assert.deepEqual(Object.keys(claims).sort(), ["aud", "credentialsVersion", "exp", "iat", "iss", "userId"]);
     assert.equal(claims.exp! - claims.iat!, 43200);
-    assert.deepEqual(await verifySessionToken(token), { userId: "staff-1", iat: claims.iat, exp: claims.exp });
+    assert.deepEqual(await verifySessionToken(token), { credentialsVersion: 1, userId: "staff-1", iat: claims.iat, exp: claims.exp });
     for (const invalid of ["", "malformed", `${token}x`]) {
       assert.equal(await verifySessionToken(invalid), null);
     }
     const key = new TextEncoder().encode(process.env.SESSION_SECRET);
     const now = Math.floor(Date.now() / 1000);
-    const base = { userId: "staff-1", iss: "aroom-pos", aud: "aroom-pos:staff-session", iat: now, exp: now + 43200 };
+    const base = { credentialsVersion: 1, userId: "staff-1", iss: "aroom-pos", aud: "aroom-pos:staff-session", iat: now, exp: now + 43200 };
     for (const overrides of [
       { iat: now - 43201, exp: now - 1 },
       { iat: now + 60, exp: now + 43260 },
       { iss: "another-app" }, { aud: "another-app" },
       { userId: " " }, { userId: 123 }, { userId: undefined },
       { exp: undefined }, { iat: undefined }, { exp: now + 86400 },
-      { role: "ADMIN" },
+      { role: "ADMIN" }, { credentialsVersion: undefined }, { credentialsVersion: 0 }, { credentialsVersion: "1" }, { credentialsVersion: 1.5 },
     ]) {
       const invalid = await new SignJWT({ ...base, ...overrides })
         .setProtectedHeader({ alg: "HS256", typ: "JWT" }).sign(key);
@@ -77,7 +76,7 @@ test("session imports are lazy; tokens enforce identity, signature and lifetime"
     assert.equal(await verifySessionToken(wrongAlgorithm), null);
     process.env.SESSION_SECRET = randomBytes(32).toString("base64");
     assert.equal(await verifySessionToken(token), null);
-    await assert.rejects(signSessionToken({ userId: "" }), /userId/);
+    await assert.rejects(signSessionToken({ credentialsVersion: 1, userId: "" }), /userId/);
   } finally {
     if (original === undefined) delete process.env.SESSION_SECRET;
     else process.env.SESSION_SECRET = original;

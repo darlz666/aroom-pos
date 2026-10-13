@@ -4,13 +4,13 @@ import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient, type Prisma } from "../src/generated/prisma/client";
-import { verifyPassword } from "../src/lib/auth/password";
+import { resetUserPassword } from "../src/lib/auth/recovery-service";
+import { hashPassword, verifyPassword } from "../src/lib/auth/password";
 import {
   changeUserRole,
   createUser,
   deleteUser,
   listUsers,
-  resetUserPassword,
   setUserActive,
   updateUser,
 } from "../src/lib/users/service";
@@ -122,28 +122,30 @@ test("Access Management PostgreSQL transactions, audits, retries and concurrent 
   );
 });
 
-await t.test("reset password stores Argon2 hash for Masuk123 and invalidates old password", async () => {
+await t.test("reset password stores unique Argon2 credential and invalidates old password", async () => {
   const oldPassword = "OldPassword123!";
-  const resettable = await createUser(db, admin, {
+  const adminPassword = "Reset-admin-private-fixture!";
+  const resetter = await db.user.create({ data: { name: "Reset operator", loginIdentifier: randomUUID(), passwordHash: await hashPassword(adminPassword), role: "ADMIN" } });
+  const resettable = await createUser(db, resetter, {
     name: "Reset Password Test",
     loginIdentifier: randomUUID(),
     password: oldPassword,
     role: "CASHIER",
   });
 
-  ids.push(resettable.id);
-
-  await resetUserPassword(db, admin, {
-    userId: resettable.id,
+  // Immutable credential evidence and its fixtures live until disposable DB cleanup.
+  const result = await resetUserPassword(db, { userId: resetter.id, credentialsVersion: 1 }, {
+    userId: resettable.id, operationId: randomUUID(), expectedVersion: 1, adminPassword,
   });
+  assert.ok(result.temporaryPassword);
 
   const stored = await db.user.findUniqueOrThrow({
     where: { id: resettable.id },
   });
 
-  assert.notEqual(stored.passwordHash, "Masuk123!");
+  assert.notEqual(stored.passwordHash, result.temporaryPassword);
   assert.equal(
-    await verifyPassword(stored.passwordHash, "Masuk123!"),
+    await verifyPassword(stored.passwordHash, result.temporaryPassword),
     true
   );
   assert.equal(
@@ -158,7 +160,7 @@ await t.test("reset password stores Argon2 hash for Masuk123 and invalidates old
     },
   });
 
-  assert.ok(!JSON.stringify(audit).includes("Masuk123!"));
+  assert.ok(!JSON.stringify(audit).includes(result.temporaryPassword));
   assert.ok(!JSON.stringify(audit).includes(stored.passwordHash));
 });
 
