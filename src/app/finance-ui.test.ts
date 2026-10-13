@@ -40,7 +40,7 @@ test("Admin home links Finance and preserves existing destinations in order", as
   assert.deepEqual(links.map(e => [text(e), e.props.href]), [
     ["Pengadaan (hanya lihat)", "/procurement"],
     ["Manajemen Akun", "/admin/users"], ["Manajemen Stok", "/inventory"],
-    ["Resep & HPP", "/recipes"], ["Finance", "/finance"],
+    ["Resep & HPP", "/recipes"], ["Kategori Menu", "/admin/categories"], ["Finance", "/finance"],
     ["Laporan harian", "/admin/reports"], ["Kembali ke Awal", "/"],
   ]);
 });

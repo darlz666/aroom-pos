@@ -1264,3 +1264,20 @@ display belong to Phase 1C. This policy does not expand Phase 1B's approved scop
   Reject stale revisions and reload before a new mutation; discard stale reads.
 - No changes to Phase 1 backend rules, deployed migrations, Stock In/WAC rules,
   operational data, expense generation, cancellation or short-close scope.
+
+## 32. Clean-start initialization (Phase 4B-1)
+
+- Owner-approved scope: a first-ADMIN bootstrap CLI and ADMIN-only category
+  management, separate from operational deployment. No demo seed or legacy data
+  import. Bootstrap uses an explicit verified target, the complete migration
+  manifest, an empty database, hidden strong-password confirmation, existing
+  Argon2id hashing, atomic audit, and repeat/concurrency rejection. It must never
+  fall back to `.env` or accept the old `aroom_pos` database.
+- `/admin/categories` provides list, create, rename, display order, active/inactive
+  status and audit history; no category deletion. Fresh server authorization,
+  normalized-name uniqueness, expected revisions, actor-bound idempotent retries
+  and atomic audit are required. Existing product references/history are preserved.
+- Category activation follows existing POS filtering; no new POS, inventory/WAC,
+  Finance, Procurement or PO rules. Authentication policy and password-reset
+  changes are outside this phase. See `src/lib/bootstrap/README.md` for safeguards,
+  first-use steps, credential handover and disposable verification commands.

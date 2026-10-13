@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "admin:bootstrap": "tsx --conditions=react-server prisma/bootstrap-admin.ts",
     "db:seed": "prisma db seed",
     "dev": "next dev",
     "build": "prisma generate && next build",

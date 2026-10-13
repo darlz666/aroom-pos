@@ -199,6 +199,7 @@ model Category {
   name         String
   displayOrder Int       @default(0)
   active       Boolean   @default(true)
+  revision     Int       @default(1)
   products     Product[]
 }
 

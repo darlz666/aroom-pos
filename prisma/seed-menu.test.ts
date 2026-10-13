@@ -35,7 +35,7 @@ test("seed restores confirmed menu values without duplicates or non-menu changes
       const savedCategories = await tx.category.findMany({
         where: { id: { in: categories.map((row) => row.id) } }, orderBy: { displayOrder: "asc" },
       });
-      assert.deepEqual(savedCategories, categories);
+      assert.deepEqual(savedCategories, categories.map(row => ({ ...row, revision: 1 })));
       const savedProducts = await tx.product.findMany({
         where: { id: { in: products.map((row) => row.id) } },
         select: { id: true, categoryId: true, name: true, price: true, active: true, available: true },
