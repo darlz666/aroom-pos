@@ -1347,3 +1347,51 @@ display belong to Phase 1C. This policy does not expand Phase 1B's approved scop
 - Candidate migration 20 only adds AuthThrottle, constraints and expiry index.
   Operational migrations, deployment, emergency ADMIN recovery and infrastructure
   configuration remain separately authorized work.
+
+## 35. Emergency ADMIN recovery (Phase 4B-2B-2)
+
+- The owner approves implementation and isolated disposable testing of a
+  maintenance-only CLI for an existing active ADMIN. This supersedes the emergency
+  recovery deferral in sections 33-34. Operational recovery, deployment and changes
+  to real databases require separate authorization. No HTTP recovery endpoint,
+  user creation, promotion, reactivation or business-record mutation is included.
+- Independent owner approval and restricted host/operator access are the
+  authorization boundary. A typed operator identity or approval reference is
+  metadata, not authentication or proof of approval. Hosting, production operator
+  identity, SSH/MFA or equivalent controls, maintenance/ingress procedures, verified
+  backup and external audit retention remain operational prerequisites.
+- Require an explicitly supplied connection target and independently expected
+  host, port, database, public schema, database/session user, server address and
+  OS/host identity. Never silently load `.env` or use `DATABASE_URL`; reject the
+  old `aroom_pos`. Verify database identity and all migration names/checksums before
+  recovery and recheck applicable identity within the credential transaction.
+- Require an owner-approved operation UUID, explicit target ADMIN UUID and expected
+  credentialsVersion. Take the replacement password only through hidden,
+  interactive input and confirmation, with the existing 20-128 character recovery
+  policy, offline screening and Argon2id hashing. Never expose credential material
+  through command arguments, logs, receipts or stored retry fingerprints.
+- Candidate additive migration 21, `20261016000000_emergency_admin_recovery`, adds
+  EmergencyAdminRecovery with required, length-checked non-secret intent and
+  identity evidence. Its operation UUID is the primary key; a restrictive FK
+  identifies the recovered User without claiming that user acted as the external
+  operator. Preserve AuditLog and its protections. Record expected/resulting
+  versions, owner approval reference, supplied external operator identity,
+  verified OS/host and database principal/target evidence, and database-generated
+  timestamptz. PostgreSQL rejects UPDATE, DELETE and TRUNCATE; a database owner or
+  DDL-capable principal can change/disable that protection and must be controlled
+  independently. No credential-derived fingerprint is recorded.
+- Use the existing access-management advisory lock. In one transaction recheck
+  target existence, active ADMIN role and expected version, replace its hash,
+  increment credentialsVersion exactly once, clear temporary credential state,
+  and insert the immutable receipt. Any failure rolls both mutations back. Old
+  signed sessions fail their next authentication/authorization check; work already
+  authorized before recovery may complete.
+- Bind operation UUID to the original non-secret intent and verified identity.
+  An identical committed replay returns authoritative status only, even if the
+  credential later changes; changed intent is rejected. A replay never reapplies
+  a password, increments a version or creates a second receipt. After a lost
+  response inspect safe status before any further attempt. A subsequent recovery
+  requires separate approval and a new operation UUID; plaintext is not recoverable.
+- Follow `src/lib/auth/emergency-recovery/README.md` for owner-approved maintenance,
+  secure credential handover, login verification and disposable test acceptance.
+  First-ADMIN bootstrap remains empty-database-only and cannot recover accounts.

@@ -2,8 +2,9 @@
 
 Implementation is separate from operational deployment. Do not access the old
 `aroom_pos`, run development seeds, or invoke bootstrap against existing records.
-The clean-start chain now contains 20 migrations, including the additive candidate
-`20261015000000_authentication_hardening`. No earlier migration changes are required.
+The clean-start chain now contains 21 migrations, including the additive candidates
+`20261015000000_authentication_hardening` and
+`20261016000000_emergency_admin_recovery`. No earlier migration changes are required.
 
 ## Initialization and compatibility
 
@@ -12,10 +13,10 @@ The candidate adds User.credentialsVersion (positive, default 1), mustChangePass
 flag and expiry presence to agree. Existing hashes and account status are preserved.
 CredentialRecovery audit rows double as unique UUID operation receipts and cannot
 be updated or deleted. No password, credential digest, token or delivery payload is
-stored in audit details. No recovery service or external delivery infrastructure.
+stored in audit details. No public recovery service or external delivery infrastructure.
 
 First ADMIN bootstrap dynamically verifies every migration name and checksum, and
-enumerates the generated model tables; the new complete 20-migration chain is used
+enumerates the generated model tables; the new complete 21-migration chain is used
 without weakening empty-database or identity checks. Its hidden password policy
 remains 20–128 code points and at least eight distinct characters. Regular new
 passwords use 12–128 code points. Login preserves legacy shorter passwords until
@@ -75,8 +76,11 @@ cookies and other devices are not revoked by ordinary logout.
 
 ## Remaining go-live dependencies
 
-- Emergency recovery for a locked-out/sole ADMIN needs separate design and owner
-  approval. Bootstrap cannot be reused for account recovery.
+- Phase 4B-2B-2 implements maintenance-only emergency recovery for an existing
+  active ADMIN, with a dedicated external-operator receipt. Real use still requires
+  separate owner approval, restricted independently authenticated host access,
+  verified backups and controlled maintenance/ingress. Bootstrap cannot be reused
+  for account recovery. See `emergency-recovery/README.md` for the trust boundary.
 - Phase 4B-2B-1 adds account admission throttling and offline screening below.
   Trusted client-IP enforcement remains disabled. Cloudflare ingress/origin access,
   broad password-spraying and volumetric attack controls still need verification.
@@ -153,3 +157,36 @@ Login does not apply the new-password blocklist and makes no corpus filesystem
 reads. New issuance validates the checksum once on initial load per process.
 Include and validate that asset in the eventual deployment artifact. No production
 hardware is selected; the implementation has no STB/ARM-specific assumptions.
+
+## Phase 4B-2B-2 emergency ADMIN recovery
+
+The maintenance CLI is separate from HTTP routes and ordinary staff recovery.
+It only replaces an existing active ADMIN's credential; it cannot create, promote
+or reactivate a user. The existing access-management advisory lock serializes it
+with bootstrap, account mutations and credential changes. Identity/version/role
+checks, version increment, temporary-state clearing and its receipt are atomic.
+Old signed sessions fail their next protected check; already-authorized in-flight
+work may complete, as described above. Throttle configuration is not a recovery
+authorization factor, and emergency recovery does not reset admission counters.
+
+EmergencyAdminRecovery records an owner-approved operation UUID, target UUID,
+expected/resulting versions, fixed non-secret intent, supplied approval/operator
+metadata, verified OS username/UID/hostname and database target/principals/address,
+with the database's timestamp. The recovered User is only the target FK, never a
+fabricated AuditLog actor. Typed operator/approval text is not evidence that the
+caller was authorized; independent host access and owner approval supply that
+trust. OS API and PostgreSQL observations establish the executing context, not
+the human's authentication method or approval validity. No password, hash, token,
+connection credential or credential-derived fingerprint belongs in receipts/logs.
+
+UPDATE/DELETE row triggers and a TRUNCATE statement trigger protect these receipts
+under ordinary DML access. They do not constrain a database owner, superuser or
+principal able to change/disable triggers, alter tables or bypass checks. Keep
+runtime DML access separate from controlled migration/DDL access and retain safe
+external operation evidence independently. Existing AuditLog protection is unchanged.
+
+Identical committed retries return authoritative status only; changed non-secret
+intent/verified identity is rejected. Passwords are never retained for replay and
+cannot be recovered from status. Inspect uncertain outcomes before considering a
+new operation; further replacement requires new owner approval and operation UUID.
+Read `emergency-recovery/README.md` before any separately approved real execution.

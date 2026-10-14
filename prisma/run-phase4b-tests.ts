@@ -23,8 +23,11 @@ async function main() {
   const before = protectedFiles.map(hash);
   const files = ["src", "prisma"].flatMap(dir => readdirSync(dir, { recursive: true })
     .filter(file => typeof file === "string" && file.endsWith(".test.ts")).map(file => join(dir, String(file)).replaceAll("\\", "/")))
-    .filter(file => !focused || /bootstrap|categories|auth|access-management|users|change-password/.test(file)).sort();
+    .filter(file => !focused || /bootstrap|categories|auth|access-management|users|change-password|emergency-admin-recovery/.test(file)).sort();
   const migrationCount = readdirSync("prisma/migrations", { withFileTypes: true }).filter(e => e.isDirectory()).length;
+  assert.equal(migrationCount, 21);
+  const migrationManifest = readdirSync("prisma/migrations", { withFileTypes: true }).filter(e => e.isDirectory())
+    .map(e => ({ name: e.name, checksum: hash(join("prisma/migrations", e.name, "migration.sql")) })).sort((a, b) => a.name.localeCompare(b.name));
   const results: { file: string; exit: number | null; tests: number; pass: number; fail: number; skipped: number; cancelled: number }[] = [];
   const created: string[] = [];
   const run = (file: string, args: string[], env: NodeJS.ProcessEnv) => new Promise<number | null>((resolve, reject) => {
@@ -57,6 +60,13 @@ async function main() {
         const [identity] = await db.$queryRaw<{ name: string }[]>`SELECT current_database() AS name`; assert.equal(identity.name, name);
         const [applied] = await db.$queryRaw<{ count: number }[]>`SELECT count(*)::int AS count FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL`;
         assert.equal(applied.count, migrationCount); assert.equal(await db.user.count(), 0);
+        const records = await db.$queryRaw<{ migration_name: string; checksum: string; finished_at: Date | null; rolled_back_at: Date | null }[]>`
+          SELECT migration_name, checksum, finished_at, rolled_back_at FROM "_prisma_migrations" ORDER BY migration_name`;
+        assert.equal(records.length, migrationManifest.length);
+        records.forEach((row, i) => {
+          assert.ok(row.finished_at); assert.equal(row.rolled_back_at, null);
+          assert.equal(row.migration_name, migrationManifest[i].name); assert.equal(row.checksum, migrationManifest[i].checksum);
+        });
         console.log(`Verified identity and ${migrationCount}/${migrationCount} migrations: ${name}`);
         if (family !== "bootstrap") for (const role of ["ADMIN", "CASHIER"] as const) await db.user.create({ data: { name: role, role, loginIdentifier: randomUUID(), passwordHash: "test-only-unused" } });
       } finally { await db.$disconnect(); }

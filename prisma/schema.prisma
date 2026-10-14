@@ -89,6 +89,7 @@ model User {
   shifts          Shift[]
   orders          Order[]
   auditLogs       AuditLog[]
+  emergencyRecoveries EmergencyAdminRecovery[]
   stockMovements  StockMovement[]
   stockIns        StockIn[]
   transactionAdjustments TransactionAdjustment[]
@@ -100,6 +101,33 @@ model User {
   inventoryPurchaseOrders InventoryPurchaseOrder[] @relation("InventoryPOCreator")
   inventoryPurchaseDecisions InventoryPurchaseOrder[] @relation("InventoryPODecision")
   inventoryPurchaseEvents InventoryPurchaseOrderEvent[]
+}
+
+// External host operators are not application users. Keep their verified identity
+// evidence separate from AuditLog.actorId and never store credential material.
+// Migration 21 enforces validity and append-only protection, including TRUNCATE.
+model EmergencyAdminRecovery {
+  id String @id @db.Uuid
+  targetUserId String @db.Uuid
+  targetUser User @relation(fields: [targetUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  expectedVersion Int
+  resultingVersion Int
+  approvalReference String
+  operatorIdentity String
+  osUsername String
+  osUid String
+  hostname String
+  databaseHost String
+  databasePort Int
+  databaseName String
+  databaseSchema String
+  databaseUser String
+  databaseSessionUser String
+  databaseServerAddress String
+  intent String
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([targetUserId, createdAt])
 }
 
 enum ProcurementStatus {

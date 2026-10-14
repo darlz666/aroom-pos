@@ -7,8 +7,9 @@ approved backup/restore and deployment procedure first.
 ## First ADMIN
 
 Use the reviewed release and generated Prisma Client with all current migrations
-applied to a NEW, empty database. There are 20 migrations including the candidate
-`20261015000000_authentication_hardening`. Keep the application stopped during bootstrap.
+applied to a NEW, empty database. There are 21 migrations including the candidates
+`20261015000000_authentication_hardening` and
+`20261016000000_emergency_admin_recovery`. Keep the application stopped during bootstrap.
 The CLI imports no dotenv configuration, does not use `DATABASE_URL`, accepts no
 arguments, and refuses redirected input/output. No development seed is invoked.
 
@@ -50,7 +51,11 @@ Verify actual HTTPS login, ADMIN access and logout before staff access. Runtime
 credentials must not be migration/owner credentials. Phase 4B-2 supersedes the old
 shared reset mechanism with private temporary credentials, mandatory replacement
 and versioned sessions. Bootstrap creates an ordinary unrestricted ADMIN with
-credentialsVersion 1; emergency ADMIN recovery remains separately deferred.
+credentialsVersion 1. Phase 4B-2B-2 adds a separate maintenance-only existing-active-
+ADMIN recovery CLI with its own external-operator receipt. Bootstrap remains
+empty-database-only and never replaces an existing account. Real emergency recovery
+requires independent owner approval and the controls described in
+`../auth/emergency-recovery/README.md`.
 See `../auth/SECURITY.md` for the approved recovery and session guarantees.
 
 ## Category management
