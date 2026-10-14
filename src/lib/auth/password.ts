@@ -2,12 +2,14 @@ import "server-only";
 
 import { hash, verify } from "@node-rs/argon2";
 import { validatePassword } from "./password-validation";
+import { screenNewPassword } from "./password-screening";
 
 export async function hashPassword(password: string): Promise<string> {
   if (!validatePassword(password)) {
     throw new Error("Password must contain 12 to 128 characters.");
   }
 
+  screenNewPassword(password);
   // The library defaults to Argon2id and generates a fresh salt. Keep its costs.
   return hash(password);
 }

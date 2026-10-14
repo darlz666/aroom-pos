@@ -21,6 +21,7 @@ export function PasswordChangeForm({ mandatory }: { mandatory: boolean }) {
     try {
       const result = await changePasswordAction(input);
       if (result.success) { router.replace("/login"); router.refresh(); return; }
+      if (result.code === "COMMON_PASSWORD") { setMessage("Password terlalu umum. Pilih frasa sandi lain yang unik."); return; }
       if (result.code === "UNAVAILABLE") setUncertain(true);
       setMessage(result.code === "EXPIRED" || result.code === "FORBIDDEN" ? "Sesi tidak berlaku. Login kembali atau hubungi Admin untuk reset baru." : result.code === "REAUTHENTICATE" ? "Password saat ini tidak sesuai." : "Perubahan ditolak atau hasil belum pasti. Jika koneksi terputus, login menggunakan password baru untuk memeriksa hasil.");
     } catch { setUncertain(true); setMessage("Hasil belum pasti. Jangan ulangi perubahan; login kembali menggunakan password baru untuk memeriksa hasil."); }

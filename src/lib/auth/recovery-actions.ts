@@ -4,11 +4,12 @@ import { requireRole } from "./authorization";
 import { getSessionIdentity, deleteSession } from "./session";
 import { prisma } from "../db";
 import { RecoveryError } from "./recovery-domain";
+import { PasswordScreeningError } from "./password-screening";
 import { changePassword, readResetStatus, resetUserPassword } from "./recovery-service";
 
 function failure(error: unknown) {
   unstable_rethrow(error);
-  return { success: false, code: error instanceof RecoveryError ? error.code : "UNAVAILABLE" } as const;
+  return { success: false, code: error instanceof RecoveryError ? error.code : error instanceof PasswordScreeningError && error.code === "COMMON_PASSWORD" ? "COMMON_PASSWORD" : "UNAVAILABLE" } as const;
 }
 async function identity() {
   const actor = await getSessionIdentity();

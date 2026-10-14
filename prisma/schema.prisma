@@ -64,6 +64,16 @@ enum StockMovementType {
 
 // All money fields store integer Indonesian rupiah.
 // Timestamps store instants; business dates must use Asia/Jakarta.
+model AuthThrottle {
+  scope String
+  key String
+  attempts Int
+  expiresAt DateTime @db.Timestamptz(3)
+
+  @@id([scope, key])
+  @@index([expiresAt])
+}
+
 model User {
   id              String          @id @default(uuid()) @db.Uuid
   name            String

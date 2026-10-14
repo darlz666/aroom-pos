@@ -1,6 +1,6 @@
 import "dotenv/config";
 import assert from "node:assert/strict";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomUUID, randomBytes } from "node:crypto";
 import { readFileSync, readdirSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -49,7 +49,7 @@ async function main() {
       assert.match(name, /^aroom_(bootstrap|access|report)_test_[a-f0-9]{32}$/);
       await control.$executeRawUnsafe(`CREATE DATABASE "${name}"`); created.push(name);
       const url = new URL(base); url.pathname = `/${name}`;
-      const env: NodeJS.ProcessEnv = { ...process.env, DATABASE_URL: url.toString(), NODE_ENV: "test", TSX_DISABLE_CACHE: "1" };
+      const env: NodeJS.ProcessEnv = { ...process.env, DATABASE_URL: url.toString(), SESSION_SECRET: randomBytes(32).toString("base64"), AUTH_THROTTLE_HMAC_SECRET: randomBytes(32).toString("base64"), NODE_ENV: "test", TSX_DISABLE_CACHE: "1" };
       console.log(`Created disposable ${name}`);
       assert.equal(await run(`${family}-migrate`, ["node_modules/prisma/build/index.js", "migrate", "deploy"], env), 0);
       const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: url.toString() }) });

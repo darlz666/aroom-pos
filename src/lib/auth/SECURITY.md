@@ -2,8 +2,8 @@
 
 Implementation is separate from operational deployment. Do not access the old
 `aroom_pos`, run development seeds, or invoke bootstrap against existing records.
-The clean-start chain now contains 19 migrations, including the additive candidate
-`20261014000000_credential_recovery`. No earlier migration changes are required.
+The clean-start chain now contains 20 migrations, including the additive candidate
+`20261015000000_authentication_hardening`. No earlier migration changes are required.
 
 ## Initialization and compatibility
 
@@ -15,7 +15,7 @@ be updated or deleted. No password, credential digest, token or delivery payload
 stored in audit details. No recovery service or external delivery infrastructure.
 
 First ADMIN bootstrap dynamically verifies every migration name and checksum, and
-enumerates the generated model tables; the new complete 19-migration chain is used
+enumerates the generated model tables; the new complete 20-migration chain is used
 without weakening empty-database or identity checks. Its hidden password policy
 remains 20–128 code points and at least eight distinct characters. Regular new
 passwords use 12–128 code points. Login preserves legacy shorter passwords until
@@ -77,10 +77,9 @@ cookies and other devices are not revoked by ordinary logout.
 
 - Emergency recovery for a locked-out/sole ADMIN needs separate design and owner
   approval. Bootstrap cannot be reused for account recovery.
-- No application login/reset reauthentication throttling or common-password
-  screening exists. Infrastructure controls are unverified. These remain security
-  blockers for go-live until separately addressed and accepted; no Redis, delivery
-  provider or speculative infrastructure has been introduced.
+- Phase 4B-2B-1 adds account admission throttling and offline screening below.
+  Trusted client-IP enforcement remains disabled. Cloudflare ingress/origin access,
+  broad password-spraying and volumetric attack controls still need verification.
 - Verify real HTTPS cookies, Android/browser form behavior and private handover
   with the owner. Automated tests do not establish physical-device acceptance.
 
@@ -92,3 +91,65 @@ selection includes authentication, users, recovery UI, bootstrap and categories.
 Only new locally generated disposable databases are migrated; identity, migration
 count and cleanup are checked. Per-file TAP results are saved outside the repository.
 Run Prisma validation, TypeScript, repository ESLint and git diff --check as well.
+
+## Phase 4B-2B-1 account admission
+
+PostgreSQL AuthThrottle reserves 10 LOGIN admissions per normalized identifier and
+5 REAUTH admissions per actor in independent 15-minute windows. REAUTH is shared
+by ADMIN reset and voluntary/mandatory password replacement. Successful requests
+also consume admissions; failures and uncertain responses cannot replenish them.
+The admission statement commits before the credential transaction/global access
+lock. Actor authorization is checked before reauthentication admission and again
+inside the credential transaction. No client-provided operation UUID resets quota.
+Denied attempts neither increment the count nor extend expiry. Use database time.
+
+HMAC keys use dedicated server-only AUTH_THROTTLE_HMAC_SECRET, never SESSION_SECRET
+as fallback. Require canonical padded standard base64 encoding 32–64 bytes generated
+by a cryptographic random generator. Reject absent/empty values, whitespace,
+noncanonical/invalid encoding, short/oversized bytes, fewer than 16 distinct byte
+values, repeated byte sequences, sequential bytes, and direct reuse of the session
+secret (encoded string or UTF-8 bytes). These weak-pattern checks are not a proof of
+entropy: operators must use a CSPRNG, never a human-chosen phrase. Errors expose no
+secret material. No NEXT_PUBLIC config or hardcoded fallback exists. Tests inject
+independent random secrets into child process environments only; no .env changes.
+No identifier, IP address, password or token is stored in the counter table. All
+application instances sharing the database must receive the identical dedicated
+secret through protected server configuration. Existing session validation and POS
+operations do not require this secret; login and sensitive reauthentication do.
+No in-memory enforcement, role exemption or header-derived source bucket exists.
+
+Rotation is a separate owner-approved operation, never automatic. Record reason,
+approver and maintenance window without secret values. Stop admission traffic and
+drain in-flight auth requests on every instance; retain counters and backups. Wait
+at least the full 15-minute admission window after the last admitted request so a
+new namespace does not prematurely replenish active quotas. Generate a fresh
+independent key through the approved secret manager, distribute atomically to all
+stopped instances, restart and verify a synthetic admission consistently across
+instances before reopening traffic. Never mix old/new keys, silently fall back,
+delete counters or print the key. If verification fails keep admission closed and
+restore the prior configuration consistently under the same approval. Emergency
+rotation sooner than 15 minutes requires explicit owner acceptance of resetting
+attempt history plus ingress restriction; this task authorizes neither procedure.
+HMAC rotation alone does not invalidate JWT sessions or rotate SESSION_SECRET.
+
+Generic login errors cover wrong passwords and exhausted admission. Recovery
+returns UNAVAILABLE without counter details, and status inspection remains usable.
+On false positives, wait at most 15 minutes after the first admitted attempt.
+Existing sessions are not revoked by throttling; no employee can exhaust a shared
+IP counter because there is no such counter. Deliberately attacking a known login
+can still temporarily deny that account; this is not protection against all DoS.
+Database/secret failures fail closed for authentication; logout is independent.
+
+Expired rows are reused on the next admission. pruneAuthenticationAttempts is a
+bounded maintenance helper deleting at most 500 rows expired more than 24 hours
+ago; it does not run a scheduler or modify infrastructure. An approved production
+maintenance schedule and table-growth monitoring are deployment prerequisites.
+Unknown-identifier flooding remains an ingress/capacity concern until configured.
+
+All new credential hashing uses the pinned local corpus described in
+password-blocklist.README.md: 150,000 raw and normalized-unique source candidates,
+150,007 effective values including local defaults, without duplicate padding.
+Login does not apply the new-password blocklist and makes no corpus filesystem
+reads. New issuance validates the checksum once on initial load per process.
+Include and validate that asset in the eventual deployment artifact. No production
+hardware is selected; the implementation has no STB/ARM-specific assumptions.

@@ -1,5 +1,6 @@
 import "server-only";
-import { randomBytes } from "node:crypto";
+import { generateTemporaryPassword } from "./password-screening";
+import { admitAuthentication, AuthenticationUnavailable } from "./throttle";
 import { Prisma, type PrismaClient } from "../../generated/prisma/client";
 import { hashPassword, verifyPassword } from "./password";
 import { changePasswordInput, currentPassword, recoveryId, resetInput, RecoveryError } from "./recovery-domain";
@@ -40,8 +41,10 @@ export function readResetStatus(db: PrismaClient, actor: Actor, userId: unknown,
     return status(tx, actor, recoveryId(userId), operationId === undefined ? undefined : recoveryId(operationId));
   });
 }
-export function resetUserPassword(db: PrismaClient, actor: Actor, input: unknown) {
+export async function resetUserPassword(db: PrismaClient, actor: Actor, input: unknown) {
   const request = resetInput(input);
+  await admin(db, actor);
+  if (!await admitAuthentication(db, "REAUTH", actor.userId)) throw new AuthenticationUnavailable();
   return transaction(db, async tx => {
     const operator = await admin(tx, actor);
     if (!await verifyPassword(operator.passwordHash, request.adminPassword)) throw new RecoveryError("REAUTHENTICATE");
@@ -53,7 +56,7 @@ export function resetUserPassword(db: PrismaClient, actor: Actor, input: unknown
       return { status: current, replayed: true, temporaryPassword: null };
     }
     if (current.credentialsVersion !== request.expectedVersion) throw new RecoveryError("STALE_VERSION");
-    const temporaryPassword = randomBytes(24).toString("base64url");
+    const temporaryPassword = generateTemporaryPassword();
     const passwordHash = await hashPassword(temporaryPassword);
     const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
     await tx.user.update({ where: { id: request.userId }, data: { passwordHash, credentialsVersion: { increment: 1 }, mustChangePassword: true, temporaryCredentialExpiresAt: expiresAt } });
@@ -62,8 +65,11 @@ export function resetUserPassword(db: PrismaClient, actor: Actor, input: unknown
     return { status: await status(tx, actor, request.userId, request.operationId), replayed: false, temporaryPassword };
   });
 }
-export function changePassword(db: PrismaClient, actor: Actor, input: unknown) {
+export async function changePassword(db: PrismaClient, actor: Actor, input: unknown) {
   const request = changePasswordInput(input);
+  await authenticated(db, actor);
+  // Also bounds expensive mandatory replacement attempts. Shared with ADMIN reset.
+  if (!await admitAuthentication(db, "REAUTH", actor.userId)) throw new AuthenticationUnavailable();
   return transaction(db, async tx => {
     const user = await authenticated(tx, actor);
     if (!user.mustChangePassword && !await verifyPassword(user.passwordHash, currentPassword(request.currentPassword))) throw new RecoveryError("REAUTHENTICATE");

@@ -7,8 +7,8 @@ approved backup/restore and deployment procedure first.
 ## First ADMIN
 
 Use the reviewed release and generated Prisma Client with all current migrations
-applied to a NEW, empty database. There are 19 migrations including the candidate
-`20261014000000_credential_recovery`. Keep the application stopped during bootstrap.
+applied to a NEW, empty database. There are 20 migrations including the candidate
+`20261015000000_authentication_hardening`. Keep the application stopped during bootstrap.
 The CLI imports no dotenv configuration, does not use `DATABASE_URL`, accepts no
 arguments, and refuses redirected input/output. No development seed is invoked.
 

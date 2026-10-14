@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { normalizeLoginIdentifier } from "./login-identifier";
 import { verifyPassword } from "./password";
 import { PASSWORD_MAX_LENGTH } from "./password-validation";
+import { admitAuthentication } from "./throttle";
 
 // Fixed public dummy, generated with hashPassword's Argon2id defaults; not a credential.
 // Verify it for missing users to perform the same password work as a wrong password.
@@ -28,6 +29,7 @@ export async function authenticateCredentials(
 
   const normalized = normalizeLoginIdentifier(loginIdentifier);
   if (!normalized) return null;
+  if (!await admitAuthentication(prisma, "LOGIN", normalized)) return null;
 
   const user = await prisma.user.findUnique({
     where: { loginIdentifier: normalized },

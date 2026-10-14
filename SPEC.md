@@ -1317,3 +1317,33 @@ display belong to Phase 1C. This policy does not expand Phase 1B's approved scop
   Login throttling and common-password screening are not implemented here and
   remain go-live security dependencies. No operational migration or cutover is
   authorized. See `src/lib/auth/SECURITY.md` for acceptance and deployment boundaries.
+
+## 34. Authentication admission and offline screening (Phase 4B-2B-1)
+
+- Hardware remains undecided. One public HTTPS domain, planned Cloudflare Tunnel,
+  PostgreSQL and shared authentication for every staff role remain the architecture.
+  No STB/ARM-specific behavior or infrastructure changes are authorized.
+- PostgreSQL persists 10 LOGIN admissions per normalized identifier per 15 minutes,
+  and 5 REAUTH admissions per authenticated actor per 15 minutes shared across
+  reset and password replacement. Include successful and in-flight attempts.
+  Reserve before expensive password work, separately from mutation transactions.
+  Denials do not extend windows; successful login does not replenish counters.
+  No permanent account lockout, role exemption, or shared staff/network ban.
+- Counter keys use domain-separated HMAC with dedicated AUTH_THROTTLE_HMAC_SECRET:
+  canonical standard base64 encoding 32–64 CSPRNG bytes, separate from SESSION_SECRET.
+  Missing, malformed, undersized or obviously patterned values fail closed. No
+  fallback. Rotation resets counter namespaces, not sessions; require coordinated
+  owner approval and the maintenance-window procedure in SECURITY.md.
+  Unknown/disabled accounts use the same login admission policy and generic error.
+  Storage/configuration failure fails closed. Existing sessions remain usable.
+- Client-IP enforcement and source-header parsing are disabled pending verified
+  Cloudflare ingress trust. Spoofed forwarding headers confer no authority.
+- New credential hashing screens at least 100,000 distinct effective candidates
+  after normalization from a pinned offline common-password corpus plus
+  local default candidates, using whole-string NFC/lowercase comparison only.
+  Hash and verify exact original bytes. Existing short/common credentials remain
+  valid at login. Bootstrap retains its stronger policy; no emergency recovery
+  implementation is included. Temporary credentials retain 192 bits of randomness.
+- Candidate migration 20 only adds AuthThrottle, constraints and expiry index.
+  Operational migrations, deployment, emergency ADMIN recovery and infrastructure
+  configuration remain separately authorized work.

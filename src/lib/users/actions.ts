@@ -4,6 +4,7 @@ import { unstable_rethrow } from "next/navigation";
 import { requireRole } from "../auth/authorization";
 import { prisma } from "../db";
 import { UserManagementError } from "./domain";
+import { PasswordScreeningError } from "../auth/password-screening";
 import {
   changeUserRole,
   createUser,
@@ -14,6 +15,7 @@ import {
 } from "./service";
 
 const messages = {
+  COMMON_PASSWORD: "Password terlalu umum. Pilih frasa sandi lain yang unik.",
   FORBIDDEN: "Access Management hanya tersedia untuk Admin aktif.",
   INVALID_INPUT: "Periksa isian. Nama dan login wajib diisi (maksimal 128 karakter); password harus 12-128 karakter.",
   INVALID_ROLE: "Pilih role yang valid.",
@@ -25,7 +27,7 @@ const messages = {
 };
 function failure(error: unknown) {
   unstable_rethrow(error);
-  const code = error instanceof UserManagementError ? error.code : "UNAVAILABLE";
+  const code = error instanceof UserManagementError ? error.code : error instanceof PasswordScreeningError && error.code === "COMMON_PASSWORD" ? "COMMON_PASSWORD" : "UNAVAILABLE";
   return { success: false, code, error: messages[code] } as const;
 }
 export async function listUsersAction() {

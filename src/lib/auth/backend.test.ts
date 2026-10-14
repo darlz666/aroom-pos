@@ -12,6 +12,10 @@ test("authentication backend with isolated database and request cookies", async 
   process.env.SESSION_SECRET = randomBytes(32).toString("base64");
   process.env.DATABASE_URL ??= "postgresql://unused:unused@localhost:1/unused";
   const { prisma } = await import("../db");
+  // This suite isolates request/auth contracts; real atomic admission is covered
+  // in prisma/auth-throttling.test.ts on disposable PostgreSQL.
+  const originalQueryRaw = prisma.$queryRaw;
+  prisma.$queryRaw = (async () => [{ attempts: 1 }]) as unknown as typeof prisma.$queryRaw;
   const require = createRequire(import.meta.url);
   const headers = require("next/headers");
   // Plain Node does not apply Next's server-component navigation alias.
@@ -261,6 +265,20 @@ test("authentication backend with isolated database and request cookies", async 
       assert.equal(options.httpOnly, true);
       assert.equal(options.sameSite, "lax");
     });
+    await t.test("missing or invalid throttle secret fails login closed without breaking an existing session", async () => {
+      const before = process.env.AUTH_THROTTLE_HMAC_SECRET;
+      try {
+        await createSession(user.id, user.credentialsVersion);
+        const existing = cookie;
+        for (const value of [undefined, "", "invalid!", Buffer.alloc(32).toString("base64")]) {
+          if (value === undefined) delete process.env.AUTH_THROTTLE_HMAC_SECRET; else process.env.AUTH_THROTTLE_HMAC_SECRET = value;
+          const reads = queries;
+          assert.deepEqual(await loginAction("admin", password), { success: false, error: "Login atau password salah." });
+          assert.equal(queries, reads); assert.equal(cookie, existing);
+          assert.deepEqual(await getCurrentUser(), safeUser());
+        }
+      } finally { if (before === undefined) delete process.env.AUTH_THROTTLE_HMAC_SECRET; else process.env.AUTH_THROTTLE_HMAC_SECRET = before; }
+    });
     await t.test("current user reloads role and active status every time without renewal", async () => {
       const before = writes;
       assert.deepEqual(await getCurrentUser(), safeUser());
@@ -307,6 +325,7 @@ test("authentication backend with isolated database and request cookies", async 
       assert.deepEqual(await logoutAction(), { success: true });
     });
   } finally {
+    prisma.$queryRaw = originalQueryRaw;
     prisma.user.findUnique = originalFindUnique;
     prisma.user.findFirst = originalFindFirst;
     t.mock.restoreAll();

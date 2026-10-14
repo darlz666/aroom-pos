@@ -16,6 +16,9 @@ test("credential recovery on positively identified disposable PostgreSQL", async
   const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: url.toString() }) });
   const [identity] = await db.$queryRaw<{ name: string }[]>`SELECT current_database() AS name`;
   assert.equal(identity.name, url.pathname.slice(1));
+  // Each scenario starts a separate throttle window; dedicated throttling tests
+  // exercise exhaustion across calls, retries, failures and concurrent clients.
+  t.beforeEach(async () => { await db.authThrottle.deleteMany(); });
   const require = createRequire(import.meta.url);
   const navigationPath = require.resolve("next/navigation"), previousNavigation = require.cache[navigationPath];
   require("next/dist/client/components/navigation.react-server");
@@ -88,6 +91,8 @@ test("credential recovery on positively identified disposable PostgreSQL", async
       await assert.rejects(resetUserPassword(db, actor, { ...input, userId: (await fixture()).id }), { code: "INTENT_CONFLICT" });
       await assert.rejects(resetUserPassword(db, { userId: second.id, credentialsVersion: 1 }, input), { code: "INTENT_CONFLICT" });
       await assert.rejects(resetUserPassword(db, actor, request(target.id)), { code: "STALE_VERSION" });
+      // Reissue is a later operator action, after this scenario's five admissions.
+      await db.authThrottle.updateMany({ data: { expiresAt: new Date(0) } });
       const issued = await resetUserPassword(db, actor, request(target.id, 2));
       assert.ok(issued.temporaryPassword);
       assert.equal((await readResetStatus(db, actor, target.id, input.operationId)).operation, "SUPERSEDED");
@@ -177,7 +182,7 @@ test("credential recovery on positively identified disposable PostgreSQL", async
     });
     await t.test("audit failure rolls back hash, version, temporary state and receipt", async () => {
       const target = await fixture(), input = request(target.id);
-      const broken = { $transaction: (fn: (tx: Prisma.TransactionClient) => Promise<unknown>) => db.$transaction(tx => fn(new Proxy(tx, { get(model, key) {
+      const broken = { user: db.user, $queryRaw: db.$queryRaw.bind(db), $transaction: (fn: (tx: Prisma.TransactionClient) => Promise<unknown>) => db.$transaction(tx => fn(new Proxy(tx, { get(model, key) {
         return key === "auditLog" ? new Proxy(model.auditLog, { get(audit, method) { return method === "create" ? async () => { throw new Error("injected"); } : Reflect.get(audit, method); } }) : Reflect.get(model, key);
       } }))) } as unknown as PrismaClient;
       await assert.rejects(resetUserPassword(broken, actor, input), /injected/);
