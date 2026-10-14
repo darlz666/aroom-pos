@@ -28,7 +28,7 @@ test("emergency ADMIN recovery on positively identified isolated PostgreSQL", as
   const directory = new URL("./migrations/", import.meta.url);
   const migrations = readdirSync(directory, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => ({ name: entry.name,
     checksum: createHash("sha256").update(readFileSync(new URL(`${entry.name}/migration.sql`, directory))).digest("hex") }));
-  assert.equal(migrations.length, 21);
+  assert.equal(migrations.length, 22);
   const osUser = userInfo();
   const evidence = { osUsername: osUser.username, osUid: String(osUser.uid), hostname: hostname() };
   const previousPassword = randomBytes(24).toString("base64url"), sharedHash = await hashPassword(previousPassword);

@@ -30,7 +30,7 @@ The receipt distinguishes supplied metadata from observed execution evidence:
 Use a certificate-verified connection for any nonlocal execution and an owner-
 verified server address. Reject ambiguous targets, role/schema overrides, missing
 identity, pending/failed/extra migrations and any checksum mismatch. Every one of
-the 21 migration names/checksums must match the reviewed source release. Never
+the 22 migration names/checksums must match the reviewed source release. Never
 silently load `.env`, use `DATABASE_URL`, or fall back to another database. The
 old `aroom_pos` is rejected. No production connection details belong in this file.
 
@@ -43,7 +43,7 @@ old `aroom_pos` is rejected. No production connection details belong in this fil
 2. Verify a backup using the approved backup/restore procedure before touching real
    credentials. Record safe verification evidence outside the application database.
    The CLI does not create, restore or establish the quality of a backup.
-3. Apply the reviewed 21-migration release under separately approved deployment
+3. Apply the reviewed 22-migration release under separately approved deployment
    authorization. Keep migration/DDL credentials controlled independently from
    normal runtime DML access. Verify the deployed offline blocklist asset/checksum.
 4. Establish the approved maintenance window. Stop admission/ingress on all
@@ -187,7 +187,7 @@ git diff --check
 ```
 
 The focused and full runs must each finish with exit 0, no failures and no
-unexplained skips. Verify all 21 migrations from a fresh database, bootstrap
+unexplained skips. Verify all 22 migrations from a fresh database, bootstrap
 compatibility, concurrent/stale attempts, committed/changed-intent retries,
 lost-response inspection, audit-insert rollback, SQL UPDATE/DELETE/TRUNCATE
 rejection, exact password verification, subsequent old-session rejection and no

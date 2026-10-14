@@ -14,8 +14,9 @@ async function verifiedTransaction<T>(db: PrismaClient, target: Target, migratio
   recoveryTarget({ RECOVERY_DATABASE_URL: target.connectionString, RECOVERY_EXPECTED_HOST: target.host,
     RECOVERY_EXPECTED_PORT: String(target.port), RECOVERY_EXPECTED_DATABASE: target.database, RECOVERY_EXPECTED_USER: target.user,
     RECOVERY_EXPECTED_SCHEMA: target.schema, RECOVERY_EXPECTED_SERVER_ADDRESS: target.serverAddress });
-  if (migrations.length !== 21 || new Set(migrations.map(m => m.name)).size !== 21 ||
+  if (migrations.length !== 22 || new Set(migrations.map(m => m.name)).size !== 22 ||
       !migrations.some(m => m.name === "20261016000000_emergency_admin_recovery") ||
+      !migrations.some(m => m.name === "20261017000000_dual_printing") ||
       migrations.some(m => !/^[a-f0-9]{64}$/.test(m.checksum))) throw new EmergencyRecoveryError("MIGRATIONS_REQUIRED");
   return db.$transaction(async tx => {
     // The pg adapter serializes Date parameters as UTC without an offset and

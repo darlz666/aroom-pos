@@ -1,4 +1,5 @@
 import type { getReceipt } from "../orders/receipt";
+import { wrapPrintText } from "./logical-text";
 
 /** Only populate this from the authenticated, paid-only getReceipt projection. */
 export type Receipt = Awaited<ReturnType<typeof getReceipt>>;
@@ -9,21 +10,6 @@ export type PrintReceipt = Readonly<{ paperWidthMm: 58; columns: 32; text: strin
 const columns = 32;
 const rule = "-".repeat(columns);
 const rupiah = (value: number) => `Rp${String(value).replace(/\B(?=(\d{3})+(?!\d))/g, ".")}`;
-
-function wrap(value: string): string[] {
-  // User-entered names/references are text, never control sequences or new lines.
-  let characters = Array.from(value.normalize("NFC").replace(/[\p{Cc}\p{Cf}\s]+/gu, " ").trim());
-  const lines: string[] = [];
-  while (characters.length > columns) {
-    const space = characters.slice(0, columns + 1).lastIndexOf(" ");
-    const end = space > 0 ? space : columns;
-    lines.push(characters.slice(0, end).join(""));
-    characters = characters.slice(end);
-    if (characters[0] === " ") characters.shift();
-  }
-  if (characters.length) lines.push(characters.join(""));
-  return lines;
-}
 
 function jakartaDateTime(value: string): string {
   const parts = new Intl.DateTimeFormat("en-GB", {
@@ -37,16 +23,18 @@ function jakartaDateTime(value: string): string {
 /** Formats saved values only: no totals, prices or change are recalculated. */
 export function formatReceipt(receipt: Receipt, copy = false): PrintReceipt {
   const lines: string[] = ["AROOM Coffee Bar"];
-  const add = (text: string) => lines.push(...wrap(text));
+  const add = (text: string) => lines.push(...wrapPrintText(text, columns));
   if (copy) lines.push("COPY");
   add(`Pesanan: ${receipt.orderNumber}`);
   add(jakartaDateTime(receipt.createdAt));
   add(`Kasir: ${receipt.cashier}`);
+  add(`Pelanggan: ${receipt.customerName || "-"}`);
   lines.push(receipt.orderType === "DINE_IN" ? "Dine-in" : "Takeaway", rule);
   for (const item of receipt.items) {
     add(item.name);
     add(`${item.quantity} x ${rupiah(item.unitPrice)}`);
     add(`Jumlah: ${rupiah(item.lineTotal)}`);
+    if (item.notes) add(`Catatan: ${item.notes}`);
   }
   lines.push(rule);
   add(`TOTAL: ${rupiah(receipt.total)}`);

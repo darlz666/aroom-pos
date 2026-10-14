@@ -6,6 +6,8 @@ import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import type { PrismaClient } from "../../generated/prisma/client";
 import * as printing from "../../lib/printing/printer";
+import * as receiptFormat from "../../lib/printing/receipt-format";
+import * as cupLabelFormat from "../../lib/printing/cup-label-format";
 import { FakePrinterAdapter } from "../../lib/printing/testing/fake-printer";
 
 const require = createRequire(import.meta.url);
@@ -95,7 +97,8 @@ function harness(initial: unknown = history(), adapter?: printing.PrinterAdapter
       if (!(index in active.slots)) { active.slots[index] = true; active.cleanups.push(effect()); }
     },
   };
-  const panel = load("../pos/receipt-panel.tsx", { react: hooks, "@/lib/printing/printer": printing });
+  const panel = load("../pos/receipt-panel.tsx", { react: hooks, "@/lib/printing/printer": printing,
+    "@/lib/printing/receipt-format": receiptFormat, "@/lib/printing/cup-label-format": cupLabelFormat });
   const component = load("./order-history.tsx", {
     react: hooks,
     "@/lib/orders/actions": actions ?? {

@@ -2,6 +2,7 @@ import "server-only";
 import type { Prisma, PrismaClient } from "../../generated/prisma/client";
 import { assertCanOpenShift, assertCanViewShift, shiftHistoryWhere, ShiftError, type ShiftActor } from "../shifts/domain";
 import { OrderError } from "./domain";
+import { normalizeCups } from "./customizations";
 
 export type OrderHistoryCursor = { createdAt: string; id: string };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -38,7 +39,7 @@ function historyRequest(input: unknown) {
 }
 
 const summarySelect = {
-  id: true, orderNumber: true, status: true, orderType: true, total: true,
+  id: true, orderNumber: true, status: true, orderType: true, customerName: true, total: true,
   createdAt: true, paidAt: true, cancelledAt: true,
   cashier: { select: { id: true, name: true } },
   shift: { select: { id: true, cashierId: true, status: true, openedAt: true, closedAt: true,
@@ -49,6 +50,7 @@ function summary(order: Prisma.OrderGetPayload<{ select: typeof summarySelect }>
   return {
     id: order.id, orderNumber: order.orderNumber, status: order.status, orderType: order.orderType,
     total: order.total, createdAt: order.createdAt.toISOString(),
+    ...(order.customerName ? { customerName: order.customerName } : {}),
     paidAt: order.paidAt?.toISOString() ?? null, cancelledAt: order.cancelledAt?.toISOString() ?? null,
     cashier: { id: order.cashier.id, name: order.cashier.name },
     shift: { id: order.shift.id, status: order.shift.status, openedAt: order.shift.openedAt.toISOString(),
@@ -95,7 +97,7 @@ export async function getHistoricalOrder(db: PrismaClient, actor: ShiftActor, or
       ...summarySelect,
       items: { orderBy: [{ productId: "asc" }, { id: "asc" }], select: {
         id: true, productId: true, productNameSnapshot: true, unitPriceSnapshot: true,
-        quantity: true, notes: true, lineTotal: true,
+        quantity: true, notes: true, lineTotal: true, cupCustomizations: true,
       } },
       payments: { orderBy: [{ createdAt: "asc" }, { id: "asc" }], select: {
         id: true, method: true, status: true, amount: true, cashReceived: true, changeAmount: true,
@@ -107,7 +109,8 @@ export async function getHistoricalOrder(db: PrismaClient, actor: ShiftActor, or
     return { ...summary(order),
       items: order.items.map(item => ({ id: item.id, productId: item.productId,
         productName: item.productNameSnapshot, unitPrice: item.unitPriceSnapshot,
-        quantity: item.quantity, notes: item.notes, lineTotal: item.lineTotal })),
+        quantity: item.quantity, notes: item.notes, lineTotal: item.lineTotal,
+        ...(item.cupCustomizations != null ? { cups: normalizeCups(item.cupCustomizations, item.quantity) } : {}) })),
       payments: order.payments.map(payment => ({ id: payment.id, method: payment.method,
         status: payment.status, amount: payment.amount, cashReceived: payment.cashReceived,
         changeAmount: payment.changeAmount, edcReference: payment.edcReference,

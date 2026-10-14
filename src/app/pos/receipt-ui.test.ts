@@ -8,6 +8,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
 import { ReceiptPanel, type Receipt } from "./receipt-panel";
 import * as printing from "../../lib/printing/printer";
+import * as receiptFormat from "../../lib/printing/receipt-format";
+import * as cupLabelFormat from "../../lib/printing/cup-label-format";
 import { FakePrinterAdapter } from "../../lib/printing/testing/fake-printer";
 
 const receipt: Receipt = {
@@ -66,7 +68,7 @@ function elements(node: unknown): Element[] {
 function text(node: unknown): string {
   if (Array.isArray(node)) return node.map(text).join(" ");
   if (node && typeof node === "object" && "props" in node) return text((node as Element).props.children);
-  return typeof node === "string" ? node : "";
+  return typeof node === "string" || typeof node === "number" ? String(node) : "";
 }
 
 // Match the existing POS test approach: execute the real UI and print service
@@ -82,6 +84,8 @@ function printHarness(adapter?: printing.PrinterAdapter) {
   runInNewContext(code, { exports, require: (id: string) => {
     if (id === "react/jsx-runtime") return require(id);
     if (id === "@/lib/printing/printer") return printing;
+    if (id === "@/lib/printing/receipt-format") return receiptFormat;
+    if (id === "@/lib/printing/cup-label-format") return cupLabelFormat;
     if (id === "react") return {
       useState(initial: unknown) {
         const index = cursor++;
@@ -172,4 +176,168 @@ test("reopening a receipt cannot bypass an in-flight print job", async () => {
   assert.match(text(original.render()), /Permintaan cetak berhasil/);
   // Completion of the old job must not report success in the new panel.
   assert.doesNotMatch(text(reopened.render()), /Permintaan cetak berhasil/);
+});
+
+const beverageReceipt: Receipt = { ...receipt, customerName: "Sinta", items: [
+  { ...receipt.items[0], notes: "For takeaway", cups: [
+    { sugar: "LESS", ice: "NORMAL", cup: "REGULAR", notes: "Oat milk" },
+    { sugar: "NO_SUGAR", ice: "NO_ICE", cup: "LARGE", notes: "For Sinta" },
+  ] },
+  { name: "Brownie", unitPrice: 0, quantity: 1, lineTotal: 0 },
+] };
+
+function dualPrintHarness(input: Receipt = beverageReceipt, options: {
+  receiptAdapter?: printing.PrinterAdapter;
+  labelAdapter?: printing.LabelPrinterAdapter;
+  receiptSimulation?: () => printing.PrinterAdapter;
+  labelSimulation?: () => printing.LabelPrinterAdapter;
+  copy?: boolean;
+} = {}) {
+  const require = createRequire(import.meta.url);
+  const slots = new Map<string, unknown[]>();
+  let active: unknown[] = [];
+  let cursor = 0;
+  const hooks = {
+    useState(initial: unknown) {
+      const instance = active;
+      const index = cursor++;
+      if (!(index in instance)) instance[index] = typeof initial === "function" ? initial() : initial;
+      return [instance[index], (value: unknown) => { instance[index] = value; }];
+    },
+    useRef(initial: unknown) {
+      const index = cursor++;
+      if (!(index in active)) active[index] = { current: initial };
+      return active[index];
+    },
+  };
+  const code = ts.transpileModule(readFileSync(new URL("./receipt-panel.tsx", import.meta.url), "utf8"), {
+    compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+  }).outputText;
+  const exports: { ReceiptPanel?: (props: unknown) => unknown } = {};
+  runInNewContext(code, { exports, require: (id: string) => {
+    if (id === "react/jsx-runtime") return require(id);
+    if (id === "react") return hooks;
+    if (id === "@/lib/printing/receipt-format") return receiptFormat;
+    if (id === "@/lib/printing/cup-label-format") return cupLabelFormat;
+    if (id === "@/lib/printing/printer") return { ...printing,
+      createSimulatedReceiptAdapter: options.receiptSimulation ?? printing.createSimulatedReceiptAdapter,
+      createSimulatedLabelAdapter: options.labelSimulation ?? printing.createSimulatedLabelAdapter,
+    };
+    throw new Error(`Unexpected dual print UI dependency: ${id}`);
+  } });
+  function expand(node: unknown, path: string): unknown {
+    if (Array.isArray(node)) return node.map((value, index) => expand(value, `${path}/${index}`));
+    if (!node || typeof node !== "object" || !("props" in node)) return node;
+    const element = node as Element;
+    if (typeof element.type === "function") {
+      const key = element.key ?? path;
+      if (!slots.has(key)) slots.set(key, []);
+      active = slots.get(key)!;
+      cursor = 0;
+      return expand(element.type(element.props), key);
+    }
+    return { ...element, props: { ...element.props, children: expand(element.props.children, `${path}/children`) } };
+  }
+  const render = () => expand({ type: exports.ReceiptPanel, props: {
+    receipt: input, onClose() {}, printerAdapter: options.receiptAdapter,
+    labelPrinterAdapter: options.labelAdapter, copy: options.copy,
+  } }, "root");
+  const button = (label: string) => elements(render()).find(element => element.type === "button" && text(element).trim() === label);
+  return { render, button, click(label: string) {
+    const found = button(label);
+    assert.ok(found, label);
+    (found.props.onClick as () => void)();
+  } };
+}
+
+test("independent previews show saved customer, cup customizations and COPY without labeling food", () => {
+  const ui = dualPrintHarness(beverageReceipt, { copy: true });
+  const tree = ui.render();
+  assert.match(text(tree), /Pelanggan: Sinta/);
+  assert.match(text(tree), /Catatan: For takeaway/);
+  const previews = elements(tree).filter(element => element.type === "pre");
+  assert.equal(previews.length, 3);
+  previews.forEach(preview => assert.match(text(preview), /^AROOM Coffee Bar\nCOPY\n/));
+  assert.match(text(previews[1]), /Cup: 1\/2\nSugar: LESS\nIce: NORMAL\nSize: REGULAR/);
+  assert.match(text(previews[2]), /Cup: 2\/2\nSugar: NO SUGAR\nIce: NO ICE\nSize: LARGE/);
+  assert.doesNotMatch(text(previews[1]) + text(previews[2]), /Brownie/);
+  const legacy = dualPrintHarness(receipt);
+  assert.match(text(legacy.render()), /Tidak ada label cup tersimpan/);
+  assert.equal(elements(legacy.render()).filter(element => element.type === "pre").length, 1);
+});
+
+test("receipt and cup simulation controls complete honestly, stay independent, and block duplicate taps", async () => {
+  let receiptAttempts = 0;
+  let labelAttempts = 0;
+  const ui = dualPrintHarness(beverageReceipt, {
+    receiptSimulation: () => printing.createSimulatedReceiptAdapter([() => { receiptAttempts++; }]),
+    labelSimulation: () => printing.createSimulatedLabelAdapter([() => { labelAttempts++; }]),
+  });
+  const receiptClick = ui.button("Simulasikan Struk")!.props.onClick as () => void;
+  receiptClick(); receiptClick();
+  ui.click("Simulasikan Label Cup 1");
+  await flush();
+  assert.equal(receiptAttempts, 1);
+  assert.equal(labelAttempts, 1);
+  const content = text(ui.render());
+  assert.match(content, /Simulasi struk selesai. Belum dicetak secara fisik/);
+  assert.match(content, /Simulasi label cup\s+1\s+selesai. Belum dicetak secara fisik/);
+  assert.doesNotMatch(content, /Permintaan cetak.*berhasil/);
+  assert.equal(ui.button("Simulasikan Struk")!.props.disabled, true);
+  assert.equal(ui.button("Simulasikan Label Cup 1")!.props.disabled, true);
+  assert.equal(ui.button("Simulasikan Label Cup 2")!.props.disabled, false);
+  assert.equal(ui.button("Cetak Struk")!.props.disabled, false);
+  receiptClick();
+  await flush();
+  assert.equal(receiptAttempts, 1);
+});
+
+test("cup simulation failure retries only that cup and retains its preview snapshot", async () => {
+  const input = structuredClone(beverageReceipt);
+  const attempts = [0, 0];
+  let created = 0;
+  const ui = dualPrintHarness(input, { labelSimulation: () => {
+    const index = created++;
+    const attempt = () => { attempts[index]++; };
+    return printing.createSimulatedLabelAdapter(index === 1 ? [() => {
+      attempt(); throw new Error("private simulation diagnostics");
+    }, attempt] : [attempt]);
+  } });
+  ui.click("Simulasikan Label Cup 1");
+  await flush();
+  ui.click("Simulasikan Label Cup 2");
+  await flush();
+  assert.deepEqual(attempts, [1, 1]);
+  assert.match(text(ui.render()), /Coba Simulasi Label Cup 2 Lagi.*Simulasi label gagal/);
+  assert.doesNotMatch(text(ui.render()), /private simulation/);
+  input.items[0].name = "Changed after label failure";
+  input.items[0].cups![1].notes = "Changed note";
+  ui.click("Coba Simulasi Label Cup 2 Lagi");
+  await flush();
+  assert.deepEqual(attempts, [1, 2]);
+  assert.equal(ui.button("Simulasikan Label Cup 1")!.props.disabled, true);
+  assert.equal(ui.button("Simulasikan Label Cup 2")!.props.disabled, true);
+  const secondPreview = elements(ui.render()).find(element => element.props["aria-label"] === "Pratinjau label cup 2")!;
+  assert.match(text(secondPreview), /Saved Latte[\s\S]*For Sinta/);
+  assert.doesNotMatch(text(secondPreview), /Changed/);
+  assert.doesNotMatch(text(ui.render()), /Permintaan cetak.*berhasil/);
+});
+
+test("pending receipt printing does not block cup simulation and receipt failure keeps cup outcome", async () => {
+  let fail!: (error: Error) => void;
+  const pending = new Promise<void>((_, reject) => { fail = reject; });
+  const adapter = new FakePrinterAdapter([() => pending]);
+  const ui = dualPrintHarness(beverageReceipt, { receiptAdapter: adapter });
+  ui.click("Cetak Struk");
+  try {
+    ui.click("Simulasikan Label Cup 1");
+    await flush();
+    assert.equal(adapter.attempts.length, 1);
+    assert.equal(ui.button("Mencetak...")!.props.disabled, true);
+    assert.match(text(ui.render()), /Simulasi label cup\s+1\s+selesai/);
+  } finally { fail(new Error("printer disconnected")); }
+  await flush();
+  assert.match(text(ui.render()), /Coba Cetak Lagi.*Pembayaran tetap berhasil/);
+  assert.equal(ui.button("Simulasikan Label Cup 1")!.props.disabled, true);
+  assert.match(text(ui.render()), /Simulasi label cup\s+1\s+selesai. Belum dicetak secara fisik/);
 });

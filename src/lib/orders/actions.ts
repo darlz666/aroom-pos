@@ -43,8 +43,10 @@ function orderDto(order: EditOrderResult) {
     id: order.id, orderNumber: order.orderNumber, status: order.status, revision: order.revision,
     shiftId: order.shiftId, cashierId: order.cashierId, orderType: order.orderType,
     total: order.total, createdAt: order.createdAt,
+    ...(order.customerName ? { customerName: order.customerName } : {}),
     items: order.items.map((item) => ({ id: item.id, productId: item.productId,
-      productName: item.productName, unitPrice: item.unitPrice, quantity: item.quantity, lineTotal: item.lineTotal })),
+      productName: item.productName, unitPrice: item.unitPrice, quantity: item.quantity, lineTotal: item.lineTotal,
+      ...(item.notes ? { notes: item.notes } : {}), ...(item.cups ? { cups: item.cups } : {}) })),
   };
 }
 

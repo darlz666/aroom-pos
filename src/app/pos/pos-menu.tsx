@@ -8,6 +8,9 @@ import { cancelOrderAction, createOrderAction, editOrderAction, getActiveUnpaidO
 import type { CreateOrderInput } from "@/lib/orders/domain";
 import type { EditOperation } from "@/lib/orders/domain";
 import type { SafeOrder } from "@/lib/orders/actions";
+import { defaultCup, resizeCups, type CupCustomization } from "@/lib/orders/customizations";
+import { CupCustomizationEditor } from "./cup-customizations";
+import { SavedOrderDetails } from "./saved-order-details";
 
 type Creation =
   | { state: "idle" | "submitting" }
@@ -24,7 +27,7 @@ type MenuProduct = {
   stockIssues: string[];
 };
 export type MenuCategory = { id: string; name: string; products: MenuProduct[] };
-type CartLine = { product: MenuProduct; quantity: number };
+type CartLine = { product: MenuProduct; quantity: number; cups?: CupCustomization[]; notes?: string };
 const rupiah = (value: number) => `Rp${new Intl.NumberFormat("id-ID").format(value)}`;
 const control = "min-h-12 min-w-12 rounded-lg border border-[#a8aea0] px-3 font-semibold hover:bg-[#e9eade] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#3e503c] disabled:cursor-not-allowed disabled:opacity-40";
 
@@ -32,6 +35,7 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [orderType, setOrderType] = useState<"DINE_IN" | "TAKEAWAY">("DINE_IN");
+  const [customerName, setCustomerName] = useState("");
   const [showConfirm, setShowConfirm] = useState(false);
   const [creation, setCreation] = useState<Creation>({
   state: "idle",
@@ -47,6 +51,8 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
   const conflictLock = useRef(false);
   const [persistedPending, setPersistedPending] = useState(false);
   const [loadingOrder, setLoadingOrder] = useState(false);
+  const configurationLock = useRef(false);
+  const [configurationOpen, setConfigurationOpen] = useState(false);
   const [conflicted, setConflicted] = useState(false);
   const [persistedError, setPersistedError] = useState<string | null>(null);
   const [paymentOrder, setPaymentOrder] = useState<SafeOrder | null>(null);
@@ -88,7 +94,9 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
     if (!snapshot.current) {
       snapshot.current = {
         createIdempotencyKey: crypto.randomUUID(), orderType,
-        items: cart.map(({ product, quantity }) => ({ productId: product.id.toLowerCase(), quantity }))
+        ...(customerName.trim() ? { customerName: customerName.trim() } : {}),
+        items: cart.map(({ product, quantity, cups, notes }) => ({ productId: product.id.toLowerCase(), quantity,
+          ...(cups ? { cups: cups.map(cup => ({ ...cup })) } : {}), ...(notes?.trim() ? { notes: notes.trim() } : {}) }))
           .sort((a, b) => a.productId < b.productId ? -1 : a.productId > b.productId ? 1 : 0),
       };
     }
@@ -100,6 +108,7 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
       if (result.success) {
         setCart([]);
         setOrderType("DINE_IN");
+        setCustomerName("");
         snapshot.current = null;
         wasUncertain.current = false;
         setCreation({ state: "success", order: result.order });
@@ -128,7 +137,7 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
 
   function add(product: MenuProduct) {
     if (
-      paymentLock.current ||
+      paymentLock.current || configurationLock.current ||
       !product.available ||
       !product.stockAvailable
     ) return;
@@ -139,13 +148,18 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
     if (!editDraft()) return;
     setCart(current => {
       const existing = current.find(line => line.product.id === product.id);
-      if (existing) return current.map(line => line.product.id === product.id ? { ...line, quantity: Math.min(99, line.quantity + 1) } : line);
+      if (existing) return current.map(line => {
+        if (line.product.id !== product.id) return line;
+        const quantity = Math.min(99, line.quantity + 1);
+        return { ...line, quantity, ...(line.cups ? { cups: resizeCups(line.cups, quantity) } : {}) };
+      });
       return [...current, { product, quantity: 1 }];
     });
   }
 
   async function runMutation(operation?: EditOperation, reason?: string) {
     if (paymentLock.current || !selectedOrder || orderMutationPending.current || conflictLock.current) return;
+    if (configurationLock.current && operation?.type !== "SET_ITEM_DETAILS" && operation?.type !== "SET_CUSTOMER") return;
     orderMutationPending.current = true;
     setPersistedPending(true);
     setPersistedError(null);
@@ -165,6 +179,8 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
         }
         if (result.code === "ORDER_NOT_EDITABLE" || result.code === "ORDER_NOT_FOUND") {
           setSelectedOrder(null);
+          configurationLock.current = false;
+          setConfigurationOpen(false);
           setOrderRefresh(value => value + 1);
         }
       }
@@ -194,6 +210,8 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
         setPersistedError(result.code === "UPDATE_FAILED" ? "Pesanan belum dapat dimuat. Periksa koneksi dan coba lagi." : result.error);
         if (result.code === "ORDER_NOT_FOUND" || result.code === "ORDER_NOT_EDITABLE") {
           setSelectedOrder(null);
+          configurationLock.current = false;
+          setConfigurationOpen(false);
           conflictLock.current = false;
           setConflicted(false);
           setOrderRefresh(value => value + 1);
@@ -207,7 +225,14 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
 
   function adjust(id: string, delta: number) {
     if (!editDraft()) return;
-    setCart(current => current.map(line => line.product.id === id ? { ...line, quantity: Math.max(1, Math.min(99, line.quantity + delta)) } : line));
+    setCart(current => current.map(line => {
+      if (line.product.id !== id) return line;
+      const quantity = Math.max(1, Math.min(99, line.quantity + delta));
+      return { ...line, quantity, ...(line.cups ? { cups: resizeCups(line.cups, quantity) } : {}) };
+    }));
+  }
+  function updateLine(id: string, values: Partial<CartLine>) {
+    if (editDraft()) setCart(current => current.map(line => line.product.id === id ? { ...line, ...values } : line));
   }
 
   if (paymentOrder) return <>
@@ -232,7 +257,10 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:grid lg:h-full lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.65fr)]">
-      <ActiveOrders refreshToken={orderRefresh} selectedOrder={selectedOrder} pending={persistedPending} loadingOrder={loadingOrder} conflicted={conflicted} mutationError={persistedError} onPay={() => { if (selectedOrder?.status === "UNPAID" && !orderMutationPending.current && !conflictLock.current && !paymentLock.current) { paymentLock.current = true; setPaymentOrder(selectedOrder); } }} onSelect={order => { if (!paymentLock.current && !orderMutationPending.current && !conflictLock.current) setSelectedOrder(order); }} onMutate={mutatePersisted} onCancel={cancelPersisted} onReload={reloadPersisted} />
+      <ActiveOrders refreshToken={orderRefresh} selectedOrder={selectedOrder} pending={persistedPending} loadingOrder={loadingOrder} conflicted={conflicted} mutationError={persistedError} onEditingChange={open => {
+        if (open && (!selectedOrder || paymentLock.current || orderMutationPending.current || conflictLock.current)) return false;
+        configurationLock.current = open; setConfigurationOpen(open); return true;
+      }} onPay={() => { if (selectedOrder?.status === "UNPAID" && !configurationLock.current && !orderMutationPending.current && !conflictLock.current && !paymentLock.current) { paymentLock.current = true; setPaymentOrder(selectedOrder); } }} onSelect={order => { if (!configurationLock.current && !paymentLock.current && !orderMutationPending.current && !conflictLock.current) setSelectedOrder(order); }} onMutate={mutatePersisted} onCancel={cancelPersisted} onReload={reloadPersisted} />
       <section aria-label="Menu" className="min-h-0 min-w-0 overflow-hidden lg:flex lg:flex-col">
         <nav aria-label="Kategori menu" className="flex shrink-0 gap-2 overflow-x-auto border-b border-[#dedfd5] p-4">
           {[{ id: null, name: "Semua" }, ...categories].map(category => (
@@ -248,7 +276,7 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
                 {category.products.map(product => {
                   const quantity = selectedOrder ? 0 : cart.find(line => line.product.id === product.id)?.quantity ?? 0;
                   return <button key={product.id} type="button" disabled={
-                  (selectedOrder ? persistedPending || conflicted : frozen) ||
+                  (selectedOrder ? persistedPending || conflicted || configurationOpen : frozen) ||
                   !product.available ||
                   !product.stockAvailable ||
                   quantity >= 99
@@ -280,13 +308,14 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
       {!selectedOrder && <aside id="cart" aria-labelledby="cart-heading" className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden scroll-mt-4 border-t border-[#dedfd5] bg-[#fffefa] lg:border-t-0 lg:border-l">
         <div className="shrink-0 px-4 pt-2 pb-2">
           <h2 id="cart-heading" className="text-xl font-semibold">Pesanan Baru <span className="text-base font-normal">({count} item)</span></h2>
+          <label className="mt-2 block text-sm">Nama pelanggan (opsional)<input aria-label="Nama pelanggan" value={customerName} disabled={frozen} maxLength={256} onChange={event => { if (editDraft()) setCustomerName(event.target.value); }} className="mt-1 min-h-12 w-full rounded-lg border border-[#a8aea0] px-3" /></label>
           <fieldset className="mt-2"><legend className="mb-2 text-sm text-[#62685c]">Jenis pesanan</legend><div className="grid grid-cols-2 gap-2">
             {([ ["DINE_IN", "DINE IN"], ["TAKEAWAY", "TAKEAWAY"] ] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={orderType === value} disabled={frozen} onClick={() => { if (editDraft()) setOrderType(value); }} className={`${control} ${orderType === value ? "bg-[#344631] text-white hover:bg-[#293926]" : ""}`}>{label}</button>)}
           </div></fieldset>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-4">
           {cart.length === 0 ? <p className="py-10 text-center leading-relaxed text-[#62685c]">Keranjang masih kosong.<br />Pilih produk dari menu untuk mulai.</p> : <ul className="divide-y divide-[#dedfd5]">
-            {cart.map(({ product, quantity }) => <li key={product.id} className="py-3">
+            {cart.map(({ product, quantity, cups, notes }) => <li key={product.id} className="py-3">
               <div className="flex flex-wrap justify-between gap-2"><h3 className="min-w-0 font-semibold break-words">{product.name}</h3><p className="font-semibold tabular-nums">{rupiah(product.price * quantity)}</p></div>
               <p className="mt-1 text-sm text-[#62685c]">{rupiah(product.price)} / item</p>
               <div className="mt-2 flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2">
@@ -294,6 +323,9 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
                 <span aria-label={`Jumlah ${product.name}`} className="min-w-8 text-center text-lg tabular-nums">{quantity}</span>
                 <button type="button" className={control} disabled={frozen || quantity === 99} aria-label={`Tambah jumlah ${product.name}`} onClick={() => adjust(product.id, 1)}>+</button>
               </div><button type="button" className={`${control} text-[#8b3026]`} aria-label={`Hapus ${product.name}`} disabled={frozen} onClick={() => { if (editDraft()) setCart(current => current.filter(line => line.product.id !== product.id)); }}>Hapus</button></div>
+              <label className="mt-3 flex min-h-12 items-center gap-3"><input type="checkbox" aria-label={`Label gelas ${product.name}`} checked={Boolean(cups)} disabled={frozen} onChange={event => updateLine(product.id, { cups: event.target.checked ? Array.from({ length: quantity }, defaultCup) : undefined })} className="h-6 w-6" />Label gelas untuk minuman</label>
+              {cups && <CupCustomizationEditor idPrefix={product.id} cups={cups} disabled={frozen} onChange={values => updateLine(product.id, { cups: values })} />}
+              <label className="mt-2 block text-sm">Catatan item<input aria-label={`Catatan item ${product.name}`} value={notes ?? ""} disabled={frozen} maxLength={1000} onChange={event => updateLine(product.id, { notes: event.target.value })} className="mt-1 min-h-12 w-full rounded-lg border border-[#a8aea0] px-3" /></label>
             </li>)}
           </ul>}
         </div>
@@ -327,6 +359,7 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
         <p className="mt-1 text-sm text-[#62685c]">
           Pastikan pesanan pelanggan sudah benar
         </p>
+        {customerName.trim() && <p className="mt-2 break-words">Pelanggan: {customerName.trim()}</p>}
       </div>
 
 
@@ -334,7 +367,7 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
       <div className="max-h-[320px] overflow-y-auto px-5 py-3">
         <div className="divide-y divide-[#dedfd5] rounded-xl border border-[#dedfd5]">
 
-          {cart.map(({product, quantity}) => (
+          {cart.map(({product, quantity, cups, notes}) => (
             <div
               key={product.id}
               className="flex items-center justify-between gap-3 px-4 py-3"
@@ -347,6 +380,8 @@ export function PosMenu({ categories }: { categories: MenuCategory[] }) {
                 <p className="text-sm text-[#62685c]">
                   {rupiah(product.price)} / item
                 </p>
+                {notes && <p className="break-words text-sm">Catatan: {notes}</p>}
+                {cups?.map((cup, index) => <p key={index} className="break-words text-sm">Gelas {index + 1}: Sugar {cup.sugar.replaceAll("_", " ")} · Ice {cup.ice.replaceAll("_", " ")} · Cup {cup.cup}{cup.notes ? ` · ${cup.notes}` : ""}</p>)}
               </div>
 
               <div className="text-right">
@@ -426,9 +461,10 @@ function ActiveOrders({
   onSelect,
   onMutate,
   onCancel,
-  onPay, onReload, pending, loadingOrder, conflicted, mutationError,
+  onPay, onReload, pending, loadingOrder, conflicted, mutationError, onEditingChange,
 }: {
   onPay: () => void;
+  onEditingChange: (open: boolean) => boolean;
   pending: boolean;
   loadingOrder: boolean;
   conflicted: boolean;
@@ -446,6 +482,9 @@ function ActiveOrders({
 
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [reason, setReason] = useState("");
+  const [editing, setEditing] = useState<"customer" | string | null>(null);
+  function closeDetails() { setEditing(null); onEditingChange(false); }
+  function openDetails(value: string) { if (!pending && !conflicted && onEditingChange(true)) setEditing(value); }
   const listRequest = useRef(0);
 
   async function load() {
@@ -469,7 +508,8 @@ function ActiveOrders({
 
   async function select(order: SafeOrder, explicit = false) {
     const result = await onReload(order.id, explicit);
-    if (result?.success) { setConfirmCancel(false); setReason(""); }
+    if (result?.success) { setConfirmCancel(false); setReason(""); closeDetails(); }
+    else if (result && (result.code === "ORDER_NOT_FOUND" || result.code === "ORDER_NOT_EDITABLE")) closeDetails();
   }
 
   async function cancel() {
@@ -490,7 +530,7 @@ function ActiveOrders({
     {loading && <p role="status" className="mt-3 text-[#62685c]">Memuat daftar pesanan aktif...</p>}
     {pending && <p role="status" className="mt-3 text-[#62685c]">{loadingOrder ? "Memuat pesanan. Tunggu sebelum mengubah pesanan." : "Menyimpan perubahan pesanan. Tunggu sebentar."}</p>}
     {orders.length === 0 ? !loading && !error && <p className="mt-3 text-[#62685c]">Belum ada pesanan aktif.</p> : <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-      {orders.map(order => <button key={order.id} type="button" aria-pressed={selectedOrder?.id === order.id} disabled={pending || conflicted} onClick={() => { if (!pending && !conflicted) void select(order); }} className={`${control} flex h-auto min-h-20 flex-col items-start gap-1 text-left ${selectedOrder?.id === order.id ? "border-[#344631] bg-[#e9eade]" : "bg-[#fffefa]"}`}>
+      {orders.map(order => <button key={order.id} type="button" aria-pressed={selectedOrder?.id === order.id} disabled={pending || conflicted || Boolean(editing)} onClick={() => { if (!pending && !conflicted && !editing) void select(order); }} className={`${control} flex h-auto min-h-20 flex-col items-start gap-1 text-left ${selectedOrder?.id === order.id ? "border-[#344631] bg-[#e9eade]" : "bg-[#fffefa]"}`}>
         <strong>{order.orderNumber}</strong><span>{rupiah(order.total)} · {order.items.reduce((sum, item) => sum + item.quantity, 0)} item</span><span className="text-sm text-[#62685c]">{order.orderType === "DINE_IN" ? "DINE IN" : "TAKEAWAY"} · {new Intl.DateTimeFormat("id-ID", { timeZone: "Asia/Jakarta", dateStyle: "short", timeStyle: "short" }).format(new Date(order.createdAt))}</span>
       </button>)}
     </div>}
@@ -499,8 +539,17 @@ function ActiveOrders({
   aria-label={`Detail ${selectedOrder.orderNumber}`}
 >
       <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="text-lg font-semibold">Edit {selectedOrder.orderNumber}</h3><p className="text-sm text-[#62685c]">{selectedOrder.status} · {selectedOrder.orderType} · Revisi {selectedOrder.revision} · Total {rupiah(selectedOrder.total)}</p></div><button type="button" className={control} disabled={pending} onClick={() => void select(selectedOrder, true)}>Muat Ulang Pesanan</button></div>
+      <p className="mt-3 break-words">Pelanggan: {selectedOrder.customerName || "-"} <button type="button" className={control} disabled={pending || conflicted || Boolean(editing)} onClick={() => openDetails("customer")}>Ubah nama pelanggan</button></p>
+      <div className="mt-2 flex flex-wrap gap-2">{selectedOrder.items.map(item => <button key={item.id} type="button" aria-label={`Atur gelas / catatan ${item.productName}`} className={control} disabled={pending || conflicted || Boolean(editing)} onClick={() => openDetails(item.id)}>Atur gelas / catatan {item.productName}{item.cups ? ` (${item.cups.length} gelas)` : ""}</button>)}</div>
+      {editing && <SavedOrderDetails key={`${selectedOrder.id}:${editing}:${selectedOrder.revision}`} item={editing === "customer" ? undefined : selectedOrder.items.find(item => item.id === editing)} customerName={selectedOrder.customerName} disabled={pending || conflicted} onClose={closeDetails} onReload={conflicted && !pending ? () => { void select(selectedOrder, true); } : undefined} onSave={async values => {
+        const operation: EditOperation = editing === "customer" ? { type: "SET_CUSTOMER", customerName: values.customerName }
+          : { type: "SET_ITEM_DETAILS", orderItemId: editing, ...(values.cups ? { cups: values.cups } : {}), ...(values.notes ? { notes: values.notes } : {}) };
+        const result = await onMutate(operation);
+        if (result && !result.success && (result.code === "ORDER_NOT_EDITABLE" || result.code === "ORDER_NOT_FOUND")) closeDetails();
+        return Boolean(result?.success);
+      }} />}
       <p className="mt-2 text-sm text-[#62685c]">Pesanan tersimpan. Total dari server. Setiap perubahan langsung disimpan. Pilih produk dari menu untuk menambah item ke pesanan ini.</p><ul className="mt-3 divide-y divide-[#dedfd5]">{selectedOrder.items.map(item => <li key={item.id} className="flex flex-wrap items-center justify-between gap-2 py-3"><span className="min-w-0 break-words"><strong>{item.productName}</strong><span className="ml-2 text-sm text-[#62685c]">{rupiah(item.unitPrice)} / item</span></span><span className="flex items-center gap-2"><button type="button" className={control} aria-label={`Kurangi ${item.productName}`} disabled={pending || conflicted || item.quantity <= 1} onClick={() => void onMutate({ type: "SET_QUANTITY", orderItemId: item.id, quantity: item.quantity - 1 })}>−</button><span className="min-w-6 text-center">{item.quantity}</span><button type="button" className={control} aria-label={`Tambah jumlah ${item.productName}`} disabled={pending || conflicted || item.quantity >= 99} onClick={() => void onMutate({ type: "SET_QUANTITY", orderItemId: item.id, quantity: item.quantity + 1 })}>+</button><button type="button" className={`${control} text-[#8b3026]`} aria-label={`Hapus ${item.productName}`} disabled={pending || conflicted} onClick={() => void onMutate({ type: "REMOVE_ITEM", orderItemId: item.id })}>Hapus</button></span></li>)}</ul>
-      <button type="button" className={control + " mt-3 bg-[#344631] text-white"} disabled={pending || conflicted || selectedOrder.status !== "UNPAID"} onClick={onPay}>Bayar pesanan</button>
+      <button type="button" className={control + " mt-3 bg-[#344631] text-white"} disabled={pending || conflicted || Boolean(editing) || selectedOrder.status !== "UNPAID"} onClick={onPay}>Bayar pesanan</button>
       {confirmCancel ? <div className="mt-3 rounded-lg border border-[#8b3026] p-3"><p className="font-semibold">Batalkan {selectedOrder.orderNumber}?</p><label htmlFor="cancel-reason" className="mt-2 block text-sm">Alasan (opsional)</label><input id="cancel-reason" disabled={pending || conflicted} value={reason} onChange={event => setReason(event.target.value)} maxLength={500} placeholder="Alasan (opsional)" className="mt-2 min-h-12 w-full rounded-lg border border-[#a8aea0] px-3" /><div className="mt-2 flex flex-wrap gap-2"><button type="button" className={`${control} bg-[#8b3026] text-white hover:bg-[#70271f]`} disabled={pending || conflicted || reason.length > 500} onClick={() => void cancel()}>Ya, batalkan</button><button type="button" className={control} disabled={pending} onClick={() => setConfirmCancel(false)}>Kembali</button></div></div> : <button type="button" className={`${control} mt-3 text-[#8b3026]`} disabled={pending || conflicted} onClick={() => setConfirmCancel(true)}>Batalkan pesanan</button>}
       <button type="button" className={control + " mt-3"} disabled={pending || conflicted} onClick={() => onSelect(null)}>Kembali ke Pesanan Baru</button>
     </div>}

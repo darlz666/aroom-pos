@@ -5,6 +5,7 @@ import { test } from "node:test";
 import type { Prisma, PrismaClient } from "../../generated/prisma/client";
 import { createReceiptPrintJob } from "../printing/printer";
 import { FakePrinterAdapter } from "../printing/testing/fake-printer";
+import { defaultCup } from "./customizations";
 
 test("receipt read projection", async (t) => {
   // Allow this server-only service to run in the plain Node test runner.
@@ -75,6 +76,19 @@ test("receipt read projection", async (t) => {
         edcReference: null, succeededAt: paidAt.toISOString() },
     });
     assert.deepEqual(await getReceipt(db, actor, orderId), receipt);
+  });
+  await t.test("customer, notes and individual cups come only from immutable order snapshots", async () => {
+    const cups = [{ ...defaultCup(), sugar: "NO_SUGAR" as const, notes: "No foam" },
+      { ...defaultCup(), ice: "LESS" as const, cup: "LARGE" as const }];
+    const order = { ...stored, customerName: "Dina",
+      items: stored.items.map(item => ({ ...item, notes: "Takeaway", cupCustomizations: cups })) };
+    const before = structuredClone(order);
+    const receipt = await getReceipt(fixture(order), actor, orderId);
+    assert.equal(receipt.customerName, "Dina"); assert.equal(receipt.items[0].name, "Original coffee");
+    assert.deepEqual(receipt.items[0].cups, cups); assert.equal(receipt.items[0].notes, "Takeaway");
+    assert.equal(receipt.items[0].unitPrice, 22000); assert.equal(receipt.total, 44000);
+    assert.deepEqual(await getReceipt(fixture(order), actor, orderId), receipt);
+    assert.deepEqual(order, before);
   });
   await t.test("unpaid and cancelled orders are rejected", async () => {
     for (const status of ["UNPAID", "CANCELLED"]) {

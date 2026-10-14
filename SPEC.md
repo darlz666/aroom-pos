@@ -1395,3 +1395,50 @@ display belong to Phase 1C. This policy does not expand Phase 1B's approved scop
 - Follow `src/lib/auth/emergency-recovery/README.md` for owner-approved maintenance,
   secure credential handover, login verification and disposable test acceptance.
   First-ADMIN bootstrap remains empty-database-only and cannot recover accounts.
+
+## 36. Dual printing software (owner-approved implementation)
+
+- Two independent outputs are approved: a 58 mm transaction receipt and individual
+  beverage cup labels intended for a separate adhesive sticker printer. The
+  software phase includes previews, explicit simulation and automated testing;
+  physical Bluetooth compatibility requires separate device acceptance.
+- Save an optional customer name on Order and optional per-unit cup customizations
+  on OrderItem alongside existing immutable product-name and price snapshots.
+  Cashier explicitly enables cup labels for a beverage line; do not infer beverage
+  eligibility from product/category names or print cup labels for every food item.
+  A labelled line has one customization snapshot per unit, in cup order.
+- Sugar options are NORMAL, LESS and NO SUGAR; ice options are NORMAL, LESS and
+  NO ICE; cup options are REGULAR and LARGE. Each cup may have different options
+  and additional free-text notes. These are preparation instructions only: no
+  customization price adjustments or recipe/stock changes are authorized.
+  Stock consumption continues to use the original product recipe and quantity.
+- Customer, line notes and cup details can be changed only while the order is
+  editable, with existing revision, shift ownership and pending-payment guards.
+  Quantity reduction keeps the first remaining cups; increasing a labelled line
+  appends cups with NORMAL sugar, NORMAL ice, REGULAR cup and empty notes.
+  Paid/cancelled snapshots remain protected. Existing orders without customer or
+  cup metadata remain valid and create no cup labels.
+- Creation retries bind the customer, notes and ordered cup snapshots to the
+  original request. Identical retries return the saved order; changed intent is
+  rejected. Existing normalized create fingerprints remain compatible.
+- Candidate additive migration 22, `20261017000000_dual_printing`, adds only
+  nullable customer/cup snapshot columns, validation functions/constraints and
+  targeted completed-order metadata protection. Previous migrations and their
+  checksums remain unchanged. Operational migration remains separately approved.
+- Render receipts from authorized saved paid-order data, including store,
+  transaction number, Asia/Jakarta timestamp, cashier, optional customer, item
+  quantities/prices, payment details and saved total. Receipt reprints visibly
+  say COPY. Cup labels show store, order number, optional customer, saved beverage
+  name, individual cup number/total, options and notes; label reprints say COPY.
+- Receipt and label destinations have separate transport interfaces, locks,
+  outcomes and explicit retry actions. Individual cup jobs retain their rendered
+  snapshot and retry independently, so a failed cup does not resend completed
+  cups. Previews are text, not printer commands. Simulated completion must say
+  simulated and must never claim that a physical printer succeeded.
+- Payment/settlement modules remain independent of printing. Failed, busy,
+  simulated, retried or historical print jobs do not mutate transactions, reverse
+  payments or consume stock. Server receipt authorization remains mandatory.
+  No browser Bluetooth assumptions, hardware command protocol, automatic print
+  queue, operational database access or deployment is approved by this phase.
+- See `src/lib/orders/DUAL_PRINTING.md` for software usage, preview examples and
+  outstanding hardware acceptance.

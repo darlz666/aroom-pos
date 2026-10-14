@@ -3,13 +3,15 @@ import { Prisma, type PrismaClient } from "../../generated/prisma/client";
 import { assertCanOpenShift, assertCanOperateShift, ShiftError, type ShiftActor } from "../shifts/domain";
 import { findActiveShift, lockShift } from "../shifts/service";
 import { assertEditable, assertPaymentsAllowMutation, fingerprintCreateRequest, formatOrderNumber, MAX_ORDER_MONEY, normalizeCancelRequest, normalizeCreateRequest, normalizeEditRequest, OrderError, priceOrder, snapshotLineTotal, sumOrderLines } from "./domain";
+import { normalizeCups, resizeCups } from "./customizations";
 
 const orderSelect = {
   id: true, orderNumber: true, status: true, revision: true, shiftId: true,
-  cashierId: true, orderType: true, total: true, createdAt: true,
+  cashierId: true, orderType: true, customerName: true, total: true, createdAt: true,
   createRequestFingerprint: true,
   items: { orderBy: { productId: "asc" }, select: {
     id: true, productId: true, productNameSnapshot: true, unitPriceSnapshot: true, quantity: true, lineTotal: true,
+    notes: true, cupCustomizations: true,
   } },
 } satisfies Prisma.OrderSelect;
 type StoredOrder = Prisma.OrderGetPayload<{ select: typeof orderSelect }>;
@@ -18,9 +20,12 @@ function result(order: StoredOrder, replayed: boolean) {
     id: order.id, orderNumber: order.orderNumber, status: order.status, revision: order.revision,
     shiftId: order.shiftId, cashierId: order.cashierId, orderType: order.orderType,
     total: order.total, createdAt: order.createdAt.toISOString(), replayed,
+    ...(order.customerName ? { customerName: order.customerName } : {}),
     items: order.items.map((item) => ({ id: item.id, productId: item.productId,
       productName: item.productNameSnapshot, unitPrice: item.unitPriceSnapshot,
-      quantity: item.quantity, lineTotal: item.lineTotal })),
+      quantity: item.quantity, lineTotal: item.lineTotal,
+      ...(item.notes ? { notes: item.notes } : {}),
+      ...(item.cupCustomizations != null ? { cups: normalizeCups(item.cupCustomizations, item.quantity) } : {}) })),
   };
 }
 
@@ -103,15 +108,23 @@ export async function editOrder(db: PrismaClient, actor: ShiftActor, input: unkn
     return await db.$transaction(async (tx) => {
       const { order, shift } = await lockMutableOrder(tx, actor, request);
       const operation = request.operation;
-      const existing = operation.type === "ADD_ITEM" ? undefined : order.items.find((item) => item.id === operation.orderItemId);
-      if (operation.type !== "ADD_ITEM" && !existing) throw new OrderError("ORDER_ITEM_NOT_FOUND");
+      const existing = "orderItemId" in operation ? order.items.find((item) => item.id === operation.orderItemId) : undefined;
+      if ("orderItemId" in operation && !existing) throw new OrderError("ORDER_ITEM_NOT_FOUND");
       if (operation.type === "SET_QUANTITY" && existing!.quantity === operation.quantity) return mutationResult(order);
+      if (operation.type === "SET_CUSTOMER" && (order.customerName ?? undefined) === operation.customerName) return mutationResult(order);
+      if (operation.type === "SET_ITEM_DETAILS") {
+        if (operation.cups && operation.cups.length !== existing!.quantity) throw new OrderError("INVALID_INPUT");
+        if ((existing!.notes ?? undefined) === operation.notes &&
+            JSON.stringify(existing!.cupCustomizations != null ? normalizeCups(existing!.cupCustomizations, existing!.quantity) : null) ===
+            JSON.stringify(operation.cups ?? null)) return mutationResult(order);
+      }
       if (order.revision === MAX_ORDER_MONEY) throw new OrderError("UPDATE_FAILED");
       let changedLine: Prisma.InputJsonObject;
       if (operation.type === "ADD_ITEM") {
         const products = await tx.product.findMany({ where: { id: operation.productId },
           select: { id: true, name: true, price: true, active: true, available: true } });
-        const [snapshot] = priceOrder([{ productId: operation.productId, quantity: operation.quantity }], products).items;
+        const [snapshot] = priceOrder([{ productId: operation.productId, quantity: operation.quantity,
+          ...(operation.cups ? { cups: operation.cups } : {}), ...(operation.notes ? { notes: operation.notes } : {}) }], products).items;
         // Always append: even identical snapshots remain deterministic independent lines.
         const line = await tx.orderItem.create({ data: { orderId: order.id, ...snapshot }, select: { id: true } });
         changedLine = { orderItemId: line.id, before: null, after: snapshot };
@@ -122,19 +135,35 @@ export async function editOrder(db: PrismaClient, actor: ShiftActor, input: unkn
           if (!product.active || !product.available) throw new OrderError("PRODUCT_UNAVAILABLE");
         }
         const lineTotal = snapshotLineTotal(existing!.unitPriceSnapshot, operation.quantity);
-        await tx.orderItem.update({ where: { id: existing!.id }, data: { quantity: operation.quantity, lineTotal } });
+        const cups = existing!.cupCustomizations != null
+          ? resizeCups(normalizeCups(existing!.cupCustomizations, existing!.quantity), operation.quantity) : undefined;
+        await tx.orderItem.update({ where: { id: existing!.id }, data: { quantity: operation.quantity, lineTotal,
+          ...(cups ? { cupCustomizations: cups } : {}) } });
         changedLine = { orderItemId: existing!.id, productId: existing!.productId,
-          before: { quantity: existing!.quantity, lineTotal: existing!.lineTotal },
-          after: { quantity: operation.quantity, lineTotal } };
+          before: { quantity: existing!.quantity, lineTotal: existing!.lineTotal,
+            ...(existing!.cupCustomizations != null ? { cupCustomizations: existing!.cupCustomizations } : {}) },
+          after: { quantity: operation.quantity, lineTotal, ...(cups ? { cupCustomizations: cups } : {}) } };
+      } else if (operation.type === "SET_ITEM_DETAILS") {
+        await tx.orderItem.update({ where: { id: existing!.id }, data: {
+          notes: operation.notes ?? null, cupCustomizations: operation.cups ?? Prisma.DbNull,
+        } });
+        changedLine = { orderItemId: existing!.id,
+          before: { notes: existing!.notes ?? null, cupCustomizations: existing!.cupCustomizations ?? null },
+          after: { notes: operation.notes ?? null, cupCustomizations: operation.cups ?? null } };
+      } else if (operation.type === "SET_CUSTOMER") {
+        changedLine = { before: { customerName: order.customerName ?? null }, after: { customerName: operation.customerName ?? null } };
       } else {
         if (order.items.length === 1) throw new OrderError("EMPTY_ORDER_NOT_ALLOWED");
         await tx.orderItem.delete({ where: { id: existing!.id } });
         changedLine = { orderItemId: existing!.id, before: { productId: existing!.productId,
           productNameSnapshot: existing!.productNameSnapshot, unitPriceSnapshot: existing!.unitPriceSnapshot,
-          quantity: existing!.quantity, lineTotal: existing!.lineTotal }, after: null };
+          quantity: existing!.quantity, lineTotal: existing!.lineTotal,
+          ...(existing!.notes ? { notes: existing!.notes } : {}),
+          ...(existing!.cupCustomizations != null ? { cupCustomizations: existing!.cupCustomizations } : {}) }, after: null };
       }
       const total = sumOrderLines(await tx.orderItem.findMany({ where: { orderId: order.id }, select: { lineTotal: true } }));
-      const updated = await tx.order.update({ where: { id: order.id }, data: { total, revision: { increment: 1 } }, select: orderSelect });
+      const updated = await tx.order.update({ where: { id: order.id }, data: { total, revision: { increment: 1 },
+        ...(operation.type === "SET_CUSTOMER" ? { customerName: operation.customerName ?? null } : {}) }, select: orderSelect });
       await tx.auditLog.create({ data: { action: "ORDER_UPDATED", entityType: "Order", entityId: order.id, actorId: actor.id,
         details: { orderNumber: order.orderNumber, shiftId: shift.id, shiftOwnerId: shift.cashierId, editingActorId: actor.id,
           revisionBefore: order.revision, revisionAfter: updated.revision, totalBefore: order.total, totalAfter: total,
@@ -195,6 +224,7 @@ export async function createOrder(db: PrismaClient, actor: ShiftActor, input: un
         const order = await tx.order.create({ data: {
           orderNumber: formatOrderNumber(sequence.value), shiftId: shift!.id, cashierId: actor.id,
           status: "UNPAID", revision: 1, orderType: request.orderType, total: priced.total,
+          ...(request.customerName ? { customerName: request.customerName } : {}),
           createIdempotencyKey: request.createIdempotencyKey, createRequestFingerprint: fingerprint,
           paidAt: null, cancelledAt: null, items: { create: priced.items },
         }, select: orderSelect });
@@ -202,7 +232,8 @@ export async function createOrder(db: PrismaClient, actor: ShiftActor, input: un
           action: "ORDER_CREATED", entityType: "Order", entityId: order.id, actorId: actor.id,
           details: { orderNumber: order.orderNumber, shiftId: shift!.id, shiftOwnerId: shift!.cashierId,
             creatorId: actor.id, orderType: order.orderType, revision: order.revision,
-            total: order.total, items: priced.items },
+            total: order.total, items: priced.items,
+            ...(request.customerName ? { customerName: request.customerName } : {}) },
         } });
         return result(order, false);
       }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });

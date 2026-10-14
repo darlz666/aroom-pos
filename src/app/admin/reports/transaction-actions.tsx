@@ -78,6 +78,7 @@ export function TransactionModal({ transaction, mode, onClose }: {
       setState("printing");
       const printed = await createReceiptPrintJob(result.receipt, undefined, true).print();
       if (printed.status === "succeeded") { completed.current = true; setState("done"); }
+      else if (printed.status === "simulated") { setError("Simulasi selesai. Tidak ada cetakan fisik."); setState("idle"); }
       else { setError(printed.error); setState("idle"); }
     } catch {
       setError("Struk belum dapat dimuat. Periksa koneksi lalu coba lagi.");

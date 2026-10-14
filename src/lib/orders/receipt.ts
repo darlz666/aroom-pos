@@ -2,6 +2,7 @@ import "server-only";
 import type { PrismaClient } from "../../generated/prisma/client";
 import { assertCanOpenShift, assertCanViewShift, ShiftError, type ShiftActor } from "../shifts/domain";
 import { OrderError } from "./domain";
+import { normalizeCups } from "./customizations";
 
 /** Read projection only. Actor must come from fresh server authentication. */
 export async function getReceipt(db: PrismaClient, actor: ShiftActor, orderId: string) {
@@ -25,9 +26,10 @@ async function readReceipt(db: PrismaClient, actor: ShiftActor, orderId: string,
       where: { id: orderId.toLowerCase() },
       select: {
         shift: { select: { cashierId: true } }, status: true, orderNumber: true, orderType: true,
-        cashier: { select: { name: true } }, createdAt: true, paidAt: true, total: true,
+        cashier: { select: { name: true } }, createdAt: true, paidAt: true, total: true, customerName: true,
         items: { orderBy: [{ productId: "asc" }, { id: "asc" }], select: {
           productNameSnapshot: true, unitPriceSnapshot: true, quantity: true, lineTotal: true,
+          notes: true, cupCustomizations: true,
         } },
         payments: { where: { status: "SUCCEEDED" }, select: {
           method: true, amount: true, cashReceived: true, changeAmount: true,
@@ -43,8 +45,11 @@ async function readReceipt(db: PrismaClient, actor: ShiftActor, orderId: string,
       orderNumber: order.orderNumber, orderType: order.orderType, cashier: order.cashier.name,
       createdAt: order.createdAt.toISOString(), paidAt: order.paidAt?.toISOString() ?? null,
       total: order.total,
+      ...(order.customerName ? { customerName: order.customerName } : {}),
       items: order.items.map((item) => ({ name: item.productNameSnapshot,
-        unitPrice: item.unitPriceSnapshot, quantity: item.quantity, lineTotal: item.lineTotal })),
+        unitPrice: item.unitPriceSnapshot, quantity: item.quantity, lineTotal: item.lineTotal,
+        ...(item.notes ? { notes: item.notes } : {}),
+        ...(item.cupCustomizations != null ? { cups: normalizeCups(item.cupCustomizations, item.quantity) } : {}) })),
       payment: {
         method: payment.method, amount: payment.amount, cashReceived: payment.cashReceived,
         changeAmount: payment.changeAmount, edcReference: payment.edcReference,

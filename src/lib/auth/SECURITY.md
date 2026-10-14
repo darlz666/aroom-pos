@@ -2,7 +2,7 @@
 
 Implementation is separate from operational deployment. Do not access the old
 `aroom_pos`, run development seeds, or invoke bootstrap against existing records.
-The clean-start chain now contains 21 migrations, including the additive candidates
+The clean-start chain now contains 22 migrations, including the additive candidates
 `20261015000000_authentication_hardening` and
 `20261016000000_emergency_admin_recovery`. No earlier migration changes are required.
 
@@ -16,7 +16,7 @@ be updated or deleted. No password, credential digest, token or delivery payload
 stored in audit details. No public recovery service or external delivery infrastructure.
 
 First ADMIN bootstrap dynamically verifies every migration name and checksum, and
-enumerates the generated model tables; the new complete 21-migration chain is used
+enumerates the generated model tables; the new complete 22-migration chain is used
 without weakening empty-database or identity checks. Its hidden password policy
 remains 20–128 code points and at least eight distinct characters. Regular new
 passwords use 12–128 code points. Login preserves legacy shorter passwords until

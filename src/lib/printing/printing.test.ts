@@ -19,6 +19,7 @@ test("deterministic 58 mm CASH receipt uses Jakarta time and saved rupiah values
     "Pesanan: AR-000123",
     "16/09/2026 01:30 WIB",
     "Kasir: Dani",
+    "Pelanggan: -",
     "Dine-in",
     "--------------------------------",
     "Saved Latte",

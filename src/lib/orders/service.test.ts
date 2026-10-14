@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { Prisma, type PrismaClient } from "../../generated/prisma/client";
 import { fingerprintCreateRequest, normalizeCreateRequest } from "./domain";
 import { cancelOrder, createOrder, editOrder } from "./service";
+import { defaultCup, type CupCustomization } from "./customizations";
 
 const actor = { id: randomUUID(), role: "CASHIER" as const };
 const request = { createIdempotencyKey: randomUUID(), orderType: "DINE_IN", items: [{ productId: randomUUID(), quantity: 1 }] };
@@ -175,4 +176,77 @@ test("list filters current shift UNPAID newest first; detail filters hidden exis
     await assert.rejects(getActiveUnpaidOrder(db, reader, randomUUID()), { code: "ORDER_NOT_FOUND" });
     for (const id of ["bad", "", "' OR 1=1", { shiftId: shift.id }]) await assert.rejects(getActiveUnpaidOrder(db, reader, id as string), { code: "INVALID_INPUT" });
   }
+});
+
+test("metadata snapshots replay safely and changed customer or individual cup intent cannot reuse a create key", async () => {
+  const cups = [{ ...defaultCup(), sugar: "NO_SUGAR" as const }];
+  const input = { ...request, customerName: "Dina", items: [{ ...request.items[0], cups, notes: "Takeaway" }] };
+  const snapshot = { ...stored, customerName: "Dina", createRequestFingerprint: fingerprintCreateRequest(normalizeCreateRequest(input)),
+    items: stored.items.map(item => ({ ...item, notes: "Takeaway", cupCustomizations: cups })) };
+  const db = { order: { findUnique: async () => snapshot } } as unknown as PrismaClient;
+  const result = await createOrder(db, actor, input);
+  assert.equal(result.customerName, "Dina"); assert.deepEqual(result.items[0].cups, cups); assert.equal(result.items[0].notes, "Takeaway");
+  for (const changed of [{ ...input, customerName: "Other" }, { ...input, items: [{ ...input.items[0], cups: [defaultCup()] }] }]) {
+    await assert.rejects(createOrder(db, actor, changed), { code: "IDEMPOTENCY_CONFLICT" });
+  }
+});
+
+test("customization and customer edits inherit paid, pending-payment, owner and revision protections", async () => {
+  for (const operation of [{ type: "SET_CUSTOMER", customerName: "Dina" },
+    { type: "SET_ITEM_DETAILS", orderItemId: stored.items[0].id, cups: [defaultCup()] }]) {
+    for (const [options, code] of [[{ status: "PAID" }, "ORDER_NOT_EDITABLE"], [{ status: "CANCELLED" }, "ORDER_NOT_EDITABLE"],
+      [{ payments: ["PENDING"] }, "PAYMENT_BLOCKED"], [{ payments: ["SUCCEEDED"] }, "PAYMENT_BLOCKED"],
+      [{ revision: 2 }, "REVISION_CONFLICT"], [{ shiftOwner: randomUUID() }, "FORBIDDEN"]] as const) {
+      const { db, events } = mutationFixture(options);
+      await assert.rejects(editOrder(db, actor, { orderId: stored.id, expectedRevision: 1, operation }), { code });
+      assert.ok(!events.includes("audit") && !events.some(event => event.includes("write")));
+    }
+  }
+});
+
+test("cup metadata edits retain fixed money, increment once, audit once, and avoid product/stock reads", async () => {
+  let snapshot = { ...stored, customerName: "Dina" as string | null,
+    items: stored.items.map(item => ({ ...item, notes: null as string | null, cupCustomizations: [defaultCup()] as CupCustomization[] | null })) };
+  const audits: unknown[] = []; let itemWrites = 0; let orderWrites = 0;
+  const tx = {
+    $queryRaw: async (sql: TemplateStringsArray) => sql.join("").includes('"Shift"')
+      ? [{ id: stored.shiftId, cashierId: actor.id, status: "OPEN" }]
+      : sql.join("").includes('"Order"') ? [{ id: stored.id }] : [],
+    order: {
+      findUnique: async (query: { select: Record<string, unknown> }) => Object.keys(query.select).length === 1 ? { shiftId: stored.shiftId } : structuredClone(snapshot),
+      update: async (query: { data: { customerName?: string | null } }) => {
+        orderWrites++; snapshot = { ...snapshot, revision: snapshot.revision + 1,
+          ...(Object.hasOwn(query.data, "customerName") ? { customerName: query.data.customerName ?? null } : {}) };
+        return structuredClone(snapshot);
+      },
+    },
+    orderItem: {
+      findMany: async () => snapshot.items.map(item => ({ lineTotal: item.lineTotal })),
+      update: async (query: { data: { notes: string | null; cupCustomizations: unknown } }) => {
+        itemWrites++;
+        snapshot.items[0].notes = query.data.notes;
+        snapshot.items[0].cupCustomizations = query.data.cupCustomizations === Prisma.DbNull ? null : query.data.cupCustomizations as CupCustomization[];
+      },
+    },
+    auditLog: { create: async (query: unknown) => { audits.push(query); } },
+  };
+  const db = { $transaction: async (fn: (value: unknown) => unknown) => fn(tx) } as unknown as PrismaClient;
+  const execute = (operation: unknown) => editOrder(db, actor, { orderId: stored.id, expectedRevision: snapshot.revision, operation });
+  const cups = [{ ...defaultCup(), cup: "LARGE" as const, notes: "No foam" }];
+  const result = await execute({ type: "SET_ITEM_DETAILS", orderItemId: stored.items[0].id, cups, notes: "Takeaway" });
+  assert.equal(result.total, 42); assert.equal(result.items[0].unitPrice, 42); assert.equal(result.items[0].quantity, 1);
+  assert.deepEqual(result.items[0].cups, cups); assert.equal(result.items[0].notes, "Takeaway");
+  assert.equal(result.revision, 2); assert.equal(itemWrites, 1); assert.equal(orderWrites, 1); assert.equal(audits.length, 1);
+  // PostgreSQL JSONB changes object-key ordering; a semantically equal request is still a no-op.
+  snapshot.items[0].cupCustomizations = [{ notes: "No foam", cup: "LARGE", ice: "NORMAL", sugar: "NORMAL" }];
+  assert.equal((await execute({ type: "SET_ITEM_DETAILS", orderItemId: stored.items[0].id, cups, notes: "Takeaway" })).revision, 2);
+  assert.equal(audits.length, 1);
+  await assert.rejects(execute({ type: "SET_ITEM_DETAILS", orderItemId: stored.items[0].id, cups: [defaultCup(), defaultCup()] }), { code: "INVALID_INPUT" });
+  assert.equal(audits.length, 1);
+  const cleared = await execute({ type: "SET_ITEM_DETAILS", orderItemId: stored.items[0].id });
+  assert.equal(cleared.items[0].cups, undefined); assert.equal(cleared.items[0].notes, undefined); assert.equal(cleared.total, 42);
+  const customer = await execute({ type: "SET_CUSTOMER", customerName: "Other" });
+  assert.equal(customer.customerName, "Other"); assert.equal(customer.total, 42);
+  assert.equal((await execute({ type: "SET_CUSTOMER" })).customerName, undefined);
+  assert.equal(itemWrites, 2); assert.equal(orderWrites, 4); assert.equal(audits.length, 4);
 });

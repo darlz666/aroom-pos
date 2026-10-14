@@ -6,6 +6,7 @@ import { runInNewContext } from "node:vm";
 import ts from "typescript";
 import { Prisma } from "../../generated/prisma/client";
 import { convertQuantity } from "../../lib/inventory/domain";
+import * as customizations from "../../lib/orders/customizations";
 import type { MenuCategory } from "./pos-menu";
 
 const require = createRequire(import.meta.url);
@@ -30,6 +31,9 @@ function load(file: string, mocks: Record<string, unknown>, globals = {}) {
     if (id === "./payment-panel") return { PaymentPanel: "PaymentPanel" };
     if (id === "./receipt-panel") return { ReceiptPanel: "ReceiptPanel" };
     if (id === "./settlement-panel") return { SettlementPanel: "SettlementPanel" };
+    if (id === "./cup-customizations") return { CupCustomizationEditor: "CupCustomizationEditor" };
+    if (id === "./saved-order-details") return { SavedOrderDetails: "SavedOrderDetails" };
+    if (id === "@/lib/orders/customizations") return customizations;
     if (id in mocks) return mocks[id];
     if (id === "react/jsx-runtime") return require(id);
     throw new Error(`Unexpected component dependency: ${id}`);
@@ -219,7 +223,50 @@ function creationHarness() {
     resolve: async (value: unknown) => { resolve(value); await new Promise(setImmediate); },
     reject: async () => { reject(new Error("private transport details")); await new Promise(setImmediate); } };
 }
+
+test("draft quantity changes preserve individual cup choices and append fresh defaults", () => {
+  const h = creationHarness(); h.click("Tambah Latte");
+  const labelToggle = elements(h.render()).find(element => element.props["aria-label"] === "Label gelas Latte")!;
+  (labelToggle.props.onChange as (event: unknown) => void)({ target: { checked: true } });
+  let editor = elements(h.render()).find(element => element.type === "CupCustomizationEditor")!;
+  (editor.props.onChange as (value: unknown) => void)([{ sugar: "NO_SUGAR", ice: "NO_ICE", cup: "LARGE", notes: "First cup" }]);
+  h.click("Tambah jumlah Latte");
+  editor = elements(h.render()).find(element => element.type === "CupCustomizationEditor")!;
+  assert.deepEqual(JSON.parse(JSON.stringify(editor.props.cups)), [
+    { sugar: "NO_SUGAR", ice: "NO_ICE", cup: "LARGE", notes: "First cup" }, customizations.defaultCup(),
+  ]);
+  h.click("Kurangi Latte");
+  editor = elements(h.render()).find(element => element.type === "CupCustomizationEditor")!;
+  assert.equal((editor.props.cups as unknown[]).length, 1);
+  assert.match(text(h.render()), /Rp22.000/);
+});
 const saved = (replayed = false) => ({ success: true, order: { orderNumber: "AR-123456", total: 31000, status: "UNPAID", replayed } });
+
+test("draft customer and individual cups are captured once and stay frozen across an interrupted create", async () => {
+  const h = creationHarness();
+  h.click("Tambah Latte"); h.click("Tambah jumlah Latte");
+  const input = (label: string) => elements(h.render()).find(element => element.props["aria-label"] === label)!;
+  (input("Nama pelanggan").props.onChange as (event: unknown) => void)({ target: { value: "  Maya  " } });
+  (input("Label gelas Latte").props.onChange as (event: unknown) => void)({ target: { checked: true } });
+  const editor = elements(h.render()).find(element => element.type === "CupCustomizationEditor")!;
+  const cups = [customizations.defaultCup(), { sugar: "NO_SUGAR", ice: "LESS", cup: "LARGE", notes: "Oat milk" }];
+  (editor.props.onChange as (value: unknown) => void)(cups);
+  h.click("Buat Pesanan"); h.click("Konfirmasi Pesanan");
+  const request = h.requests[0] as { customerName: string; items: { quantity: number; cups: unknown[] }[] };
+  assert.equal(request.customerName, "Maya"); assert.equal(request.items[0].quantity, 2);
+  assert.deepEqual(request.items[0].cups, cups);
+  assert.equal(input("Nama pelanggan").props.disabled, true);
+  assert.equal(input("Label gelas Latte").props.disabled, true);
+  cups[1].notes = "Mutated after submission";
+  await h.reject();
+  h.click("Coba Lagi"); h.click("Konfirmasi Pesanan");
+  assert.deepEqual(h.requests[1], request);
+  assert.doesNotMatch(JSON.stringify(h.requests), /Mutated after submission/);
+  await h.resolve(saved());
+  h.click("Pesanan Baru"); h.click("Tambah Latte");
+  assert.equal(input("Nama pelanggan").props.value, "");
+  assert.equal(input("Label gelas Latte").props.checked, false);
+});
 
 test("create sends only allowed fields, guards double clicks, freezes controls and acknowledges authoritative success", async () => {
   const h = creationHarness();
@@ -389,6 +436,53 @@ function orderState(revision = 3) {
   return { id: "order", orderNumber: "AR-000123", status: "UNPAID", orderType: "TAKEAWAY", revision, total: 54000,
     createdAt: "2026-09-15T00:00:00Z", items: [{ id: "line", productId: "product", productName: "Saved Coffee", unitPrice: 27000, quantity: 2, lineTotal: 54000 }] };
 }
+
+test("details editing blocks stale payment handlers and releases the register on terminal order responses", async () => {
+  for (const code of ["ORDER_NOT_EDITABLE", "ORDER_NOT_FOUND"]) {
+    const h = persistedHarness(); await h.select();
+    const stalePay = h.button("Bayar pesanan").props.onClick as () => void;
+    h.click("Atur gelas / catatan Saved Coffee");
+    assert.equal(h.button("Bayar pesanan").props.disabled, true);
+    assert.equal(h.button("Tambah Latte").props.disabled, true);
+    stalePay();
+    assert.equal(elements(h.render()).find(element => element.type === "PaymentPanel"), undefined);
+    const editor = elements(h.render()).find(element => element.type === "SavedOrderDetails")!;
+    const saving = (editor.props.onSave as (values: unknown) => Promise<boolean>)({ cups: [customizations.defaultCup(), customizations.defaultCup()] });
+    assert.equal(h.requests.length, 1);
+    await h.resolve({ success: false, code, error: code });
+    assert.equal(await saving, false);
+    assert.equal(elements(h.render()).find(element => element.type === "SavedOrderDetails"), undefined);
+    h.click("Tambah Latte");
+    assert.match(text(h.render()), /Pesanan Baru.*Latte.*Rp22.000/);
+  }
+});
+
+test("a stale details-opening handler cannot leave a lock after payment entry and exit", async () => {
+  const h = persistedHarness(); await h.select();
+  const staleOpen = h.button("Atur gelas / catatan Saved Coffee").props.onClick as () => void;
+  h.click("Bayar pesanan"); staleOpen();
+  const panel = elements(h.render()).find(element => element.type === "PaymentPanel")!;
+  (panel.props.onClose as () => void)(); await h.flush();
+  assert.equal(elements(h.render()).find(element => element.type === "SavedOrderDetails"), undefined);
+  h.click("Tambah Latte");
+  assert.equal(h.requests.length, 1);
+  await h.resolve({ success: true, order: orderState(4) });
+});
+
+test("terminal reload after an uncertain detail save releases the editor and register", async () => {
+  const h = persistedHarness(); await h.select(); h.click("Atur gelas / catatan Saved Coffee");
+  const editor = () => elements(h.render()).find(element => element.type === "SavedOrderDetails")!;
+  const saving = (editor().props.onSave as (values: unknown) => Promise<boolean>)({ notes: "Meja 4" });
+  await h.resolve({ success: false, code: "UPDATE_FAILED", error: "Hasil belum pasti" });
+  assert.equal(await saving, false);
+  assert.equal(editor().props.disabled, true);
+  h.detailFailure("ORDER_NOT_FOUND");
+  (editor().props.onReload as () => void)(); await h.flush();
+  assert.equal(elements(h.render()).find(element => element.type === "SavedOrderDetails"), undefined);
+  h.click("Tambah Latte");
+  assert.match(text(h.render()), /Pesanan Baru.*Latte.*Rp22.000/);
+  assert.equal(h.requests.length, 1);
+});
 
 test("active empty/list, authoritative selection, and local draft separation", async () => {
   const empty = persistedHarness([]); await empty.flush(); assert.match(text(empty.render()), /Belum ada pesanan aktif/);
