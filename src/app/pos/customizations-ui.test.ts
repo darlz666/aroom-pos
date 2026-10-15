@@ -20,6 +20,28 @@ test("per-cup inputs show each saved choice with large controls and escaped note
   for (const text of ["Gelas 1", "Gelas 2", "NO SUGAR", "NO ICE", "LARGE", "min-h-12", "&lt;script&gt;"]) assert.ok(html.includes(text), text);
   assert.doesNotMatch(html, /<script>/);
 });
+test("all readable selector labels retain their saved option values and affect only the selected cup", () => {
+  let updated: CupCustomization[] | undefined;
+  const original = structuredClone(cups);
+  const tree = CupCustomizationEditor({ cups: original, idPrefix: "drink", disabled: false, onChange(value) { updated = value; } });
+  const nodes = elements(tree);
+  for (const [name, field, options] of [
+    ["Sugar", "sugar", [["NORMAL", "NORMAL"], ["LESS", "LESS"], ["NO_SUGAR", "NO SUGAR"]]],
+    ["Ice", "ice", [["NORMAL", "NORMAL"], ["LESS", "LESS"], ["NO_ICE", "NO ICE"]]],
+    ["Cup", "cup", [["REGULAR", "REGULAR"], ["LARGE", "LARGE"]]],
+  ] as const) {
+    for (let cup = 1; cup <= cups.length; cup++) {
+      const select = nodes.find(element => element.props["aria-label"] === `${name} gelas ${cup}`)!;
+      assert.deepEqual(elements(select.props.children).map(option => [option.props.value, option.props.children]), options);
+      for (const [value] of options) {
+        (select.props.onChange as (event: unknown) => void)({ target: { value } });
+        assert.deepEqual(updated?.[cup - 1], { ...original[cup - 1], [field]: value });
+        assert.deepEqual(updated?.[cup === 1 ? 1 : 0], original[cup === 1 ? 1 : 0]);
+      }
+    }
+  }
+  assert.deepEqual(original, cups);
+});
 test("changing a cup field preserves other units without mutating the input", () => {
   let updated: CupCustomization[] | undefined;
   const original = structuredClone(cups);

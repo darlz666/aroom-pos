@@ -252,6 +252,60 @@ test("detail loading and retry preserve saved values, timestamps and separate pa
   assert.ok(ui.button("Cetak ulang struk"));
 });
 
+test("history detail shows saved customer and ordered per-cup instructions under the correct item", async () => {
+  const saved = {
+    ...order(), customerName: 'Dina <script>alert("customer")</script>',
+    items: [
+      { ...order().items[0], cups: [
+        { sugar: "NORMAL", ice: "NO_ICE", cup: "REGULAR", notes: "First cup <img src=x>" },
+        { sugar: "NO_SUGAR", ice: "LESS", cup: "LARGE", notes: "Second cup & takeaway" },
+      ] },
+      { ...order().items[0], id: id(301), productId: id(401), productName: "Saved tea", quantity: 1, notes: null,
+        cups: [{ sugar: "LESS", ice: "NORMAL", cup: "REGULAR", notes: "Tea only" }] },
+      { ...order().items[0], id: id(302), productId: id(402), productName: "Saved food", quantity: 1, notes: "No sauce" },
+    ],
+  };
+  const before = structuredClone(saved);
+  const ui = harness();
+  ui.click("Lihat AR-000001");
+  ui.reads.detail[0].resolve({ success: true, order: saved });
+  await flush();
+  const tree = ui.render();
+  const content = (node: unknown) => text(node).replace(/\s+/g, " ");
+  assert.ok(content(tree).includes(`Pelanggan: ${saved.customerName}`));
+  const itemList = elements(tree).find(element => element.props["aria-label"] === "Item tersimpan")!;
+  const items = itemList.props.children as Element[];
+  assert.equal(items.length, 3);
+  const coffee = elements(items[0]).find(element => element.props["aria-label"] === "Gelas tersimpan Saved coffee")!;
+  const cups = coffee.props.children as Element[];
+  assert.equal(cups.length, 2);
+  assert.match(content(cups[0]), /Gelas 1 \/ 2.*Sugar NORMAL.*Ice NO ICE.*Cup Size REGULAR.*Catatan First cup <img src=x>/);
+  assert.doesNotMatch(content(cups[0]), /NO SUGAR|LARGE|Second cup|Tea only/);
+  assert.match(content(cups[1]), /Gelas 2 \/ 2.*Sugar NO SUGAR.*Ice LESS.*Cup Size LARGE.*Catatan Second cup & takeaway/);
+  assert.doesNotMatch(content(cups[1]), /First cup|Tea only|REGULAR/);
+  assert.match(content(items[1]), /Saved tea.*Gelas 1 \/ 1.*Sugar LESS.*Ice NORMAL.*Cup Size REGULAR.*Tea only/);
+  assert.doesNotMatch(content(items[1]), /First cup|Second cup/);
+  assert.match(content(items[2]), /Saved food.*No sauce/);
+  assert.doesNotMatch(content(items[2]), /Gelas|Sugar|Ice|Cup Size/);
+  // Saved text remains plain React children; it never becomes executable markup.
+  assert.ok(elements(tree).every(element => !["script", "img"].includes(String(element.type)) && !("dangerouslySetInnerHTML" in element.props)));
+  assert.deepEqual(saved, before);
+  assert.equal(ui.reads.receipt.length, 0);
+});
+
+test("legacy history detail does not invent a customer, cups or preparation defaults", async () => {
+  const saved = order();
+  const ui = harness();
+  ui.click("Lihat AR-000001");
+  ui.reads.detail[0].resolve({ success: true, order: saved });
+  await flush();
+  const content = text(ui.render());
+  assert.match(content, /Saved coffee.*Less sweet/);
+  assert.doesNotMatch(content, /Pelanggan|Gelas|Sugar|Ice|Cup Size|NORMAL|REGULAR/);
+  assert.equal(elements(ui.render()).filter(element => element.type === "ol").length, 0);
+  assert.ok(ui.button("Cetak ulang struk"));
+});
+
 test("unpaid and cancelled details cannot request a reprint", async () => {
   for (const status of ["UNPAID", "CANCELLED"]) {
     const saved = order(1, status);

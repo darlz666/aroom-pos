@@ -165,11 +165,23 @@ function HistoricalDetail({ order }: { order: Detail }) {
   return <div className="space-y-4 break-words">
     <h3 className="text-xl font-semibold">{order.orderNumber} · {statusLabel[order.status]}</h3>
     <p>{order.orderType === "DINE_IN" ? "Dine-in" : "Takeaway"} · Kasir: {order.cashier.name}</p>
+    {order.customerName && <p>Pelanggan: {order.customerName}</p>}
     <p>Pemilik shift: {order.shift.cashier.name} · {order.shift.status === "CLOSED" ? "Shift ditutup" : "Shift terbuka"}</p>
     <div><Timestamp label="Dibuat" value={order.createdAt} /><Timestamp label="Dibayar" value={order.paidAt} /><Timestamp label="Dibatalkan" value={order.cancelledAt} /></div>
     <ul aria-label="Item tersimpan" className="space-y-3 border-y border-dashed border-[#a8aea0] py-4">
       {order.items.map(item => <li key={item.id}><p className="font-semibold">{item.productName}</p>
         <p>{item.quantity} × {rupiah(item.unitPrice)} · {rupiah(item.lineTotal)}</p>{item.notes && <p>Catatan: {item.notes}</p>}
+        {item.cups && <ol aria-label={`Gelas tersimpan ${item.productName}`} className="mt-3 space-y-3">
+          {item.cups.map((cup, index, cups) => <li key={index} className="rounded-lg border border-[#dedfd5] p-3">
+            <h4 className="font-semibold">Gelas {index + 1} / {cups.length}</h4>
+            <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
+              <dt>Sugar</dt><dd>{cup.sugar.replaceAll("_", " ")}</dd>
+              <dt>Ice</dt><dd>{cup.ice.replaceAll("_", " ")}</dd>
+              <dt>Cup Size</dt><dd>{cup.cup}</dd>
+              {cup.notes && <><dt>Catatan</dt><dd>{cup.notes}</dd></>}
+            </dl>
+          </li>)}
+        </ol>}
       </li>)}
     </ul>
     <p className="text-2xl font-semibold">Total: {rupiah(order.total)}</p>
